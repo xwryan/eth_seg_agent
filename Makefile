@@ -31,8 +31,9 @@ AIP_SRC := $(AIP_CORE)/aip_core_pkg.sv \
            examples/aip/eth_seg_aip_pkg.sv test/aip/eth_seg_aip_test_pkg.sv test/aip/tb_aip.sv
 NET_INC := $(addprefix +incdir+$(NET_PACKET)/src/,common protocols protocols/l2 protocols/l3 \
            protocols/l4 protocols/tunnel protocols/rdma protocols/storage protocols/app \
-           core parser pcap sequence stream uvm_wrapper) +incdir+$(NET_PACKET)/src
-NET_SRC := $(NET_PACKET)/src/net_packet_pkg.sv \
+           core parser pcap sequence stream uvm_wrapper) +incdir+$(NET_PACKET)/src $(AIP_INC)
+# net_packet 默认依赖 aip_core，必须先编译它（且只编译一次）。
+NET_SRC := $(AIP_CORE)/aip_core_pkg.sv $(NET_PACKET)/src/net_packet_pkg.sv \
            rtl/eth_seg_if.sv src/eth_seg_types.sv src/eth_seg_pkg.sv src/eth_net_packet_pkg.sv
 NET_TEST_SRC := $(NET_SRC) checker/eth_seg_protocol_checker.sv \
                 test/net_packet/eth_net_packet_test_pkg.sv test/net_packet/tb_net_packet.sv
@@ -42,7 +43,7 @@ FLOW_SRC := $(NET_SRC) $(FLOW_CONTROL)/src/flow_control_pkg.sv src/eth_flow_pkg.
 FLOW_TEST_SRC := $(FLOW_SRC) checker/eth_seg_protocol_checker.sv \
                  test/net_packet/eth_net_packet_test_pkg.sv \
                  test/flow/eth_flow_test_pkg.sv test/flow/tb_flow.sv
-NET_AIP_SRC := $(AIP_CORE)/aip_core_pkg.sv $(FLOW_SRC) \
+NET_AIP_SRC := $(FLOW_SRC) \
                checker/eth_seg_protocol_checker.sv bind/eth_seg_bind_wrapper.sv \
                examples/aip/eth_net_packet_aip_pkg.sv test/net_packet/eth_net_packet_test_pkg.sv \
                test/net_packet/eth_net_packet_aip_test_pkg.sv test/net_packet/tb_net_packet_aip.sv
@@ -57,6 +58,7 @@ flow-test:
 	$(MAKE) --no-print-directory flow-run BUILD=build/flow
 
 flow-run:
+	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core_pkg.sv"
 	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/src/net_packet_pkg.sv"
 	test -n "$(FLOW_CONTROL)" && test -f "$(FLOW_CONTROL)/src/flow_control_pkg.sv"
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
@@ -81,7 +83,7 @@ hub-run:
 	python3 scripts/check_log.py $(BUILD)/logs/hub.log run ETH_HUB_TEST_COMPLETE
 
 
-# RM/SCB 示例使用网络报文，但不依赖可选 AIP；复位控制只属于测试。
+# RM/SCB 示例使用网络报文；复位控制只属于测试。
 SAMPLING_SRC := $(NET_SRC) checker/eth_seg_protocol_checker.sv \
                 test/sampling/eth_sampling_control.sv examples/sampling/eth_rm_scb_example_pkg.sv \
                 test/sampling/eth_rm_scb_test_pkg.sv test/sampling/tb_rm_scb.sv
@@ -91,6 +93,7 @@ sampling-test:
 	$(MAKE) --no-print-directory sampling-run BUILD=build/sampling
 
 sampling-run:
+	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core_pkg.sv"
 	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/src/net_packet_pkg.sv"
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
 	$(VCS) $(VCSFLAGS) $(NET_INC) -top tb_rm_scb $(SAMPLING_SRC) -l $(BUILD)/logs/compile.log
@@ -131,6 +134,7 @@ net-packet-test:
 
 # net_packet_pkg 使用独立 package 类型，不同时使用旧 filelist.f 的 $unit 声明。
 net-packet-run:
+	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core_pkg.sv"
 	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/src/net_packet_pkg.sv"
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
 	$(VCS) $(VCSFLAGS) $(NET_INC) -top tb_net_packet $(NET_TEST_SRC) -l $(BUILD)/logs/compile.log
@@ -141,13 +145,12 @@ net-packet-run:
 net-packet-aip-test:
 	$(MAKE) --no-print-directory net-packet-aip-run BUILD=build/net_packet_aip
 
-# AIP 必须在 net_packet_pkg 之前编译，以启用 packet.load_params 的 Tcl 参数入口。
 net-packet-aip-run:
 	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/src/net_packet_pkg.sv"
 	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core_pkg.sv"
 	test -n "$(FLOW_CONTROL)" && test -f "$(FLOW_CONTROL)/src/flow_control_pkg.sv"
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
-	$(VCS) $(VCSFLAGS) $(NET_INC) $(FLOW_INC) $(AIP_INC) -debug_access+all -top tb_net_packet_aip $(NET_AIP_SRC) -l $(BUILD)/logs/compile.log
+	$(VCS) $(VCSFLAGS) $(NET_INC) $(FLOW_INC) -debug_access+all -top tb_net_packet_aip $(NET_AIP_SRC) -l $(BUILD)/logs/compile.log
 	python3 scripts/check_log.py $(BUILD)/logs/compile.log compile
 	AIP_CORE="$(abspath $(AIP_CORE))" $(SIMV) +ntb_random_seed=$(SEED) -ucli -do $(abspath test/net_packet/send.tcl) -no_save -exitstatus -l $(BUILD)/logs/net_packet_aip_test.log < /dev/null
 	python3 scripts/check_log.py $(BUILD)/logs/net_packet_aip_test.log run ETH_NET_AIP_TEST_COMPLETE
