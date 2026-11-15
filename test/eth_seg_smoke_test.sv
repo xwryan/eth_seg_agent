@@ -1,5 +1,4 @@
-// 基础 smoke test：在同一仿真中驱动三个独立 RATE interface，覆盖连续与周期 ready/valid、
-// FCS/preamble 组合和 400G 长帧。测试结束前等待固定窗口，物理完成仍以 monitor/scoreboard 诊断为准。
+// smoke test：同一仿真驱动三个 RATE interface，覆盖连续/周期 ready-valid、FCS/前导组合和 400G 长帧。
 import uvm_pkg::*;
 import eth_seg_pkg::*;
 import eth_seg_types_pkg::*;
@@ -13,12 +12,11 @@ class eth_seg_smoke_test extends uvm_test;
   virtual eth_seg_if#(200) vif200;
   virtual eth_seg_if#(400) vif400;
 
-  // 创建 smoke test；三个参数化 env 在 build_phase 中分别绑定 virtual interface。
   function new(string name = "eth_seg_smoke_test", uvm_component parent = null);
     super.new(name, parent);
   endfunction
 
-  // 为每个 RATE 建立一对 active role config；client 发送 TX，MAC 发送 RX 并生成 ready。
+  // 每个 RATE 一对 active agent：client 发 TX，MAC 发 RX 并产生 ready。
   function void build_phase(uvm_phase phase);
     eth_seg_config#(100) c100; eth_seg_config#(100) m100;
     eth_seg_config#(200) c200; eth_seg_config#(200) m200;
@@ -64,7 +62,7 @@ class eth_seg_smoke_test extends uvm_test;
     tx100.frame_count=4; rx100.frame_count=4; tx100.frame_length=64; rx100.frame_length=64; tx100.include_fcs=1; rx100.include_fcs=1;
     tx200.frame_count=4; rx200.frame_count=4; tx200.frame_length=128; rx200.frame_length=128;
     tx400.frame_count=3; rx400.frame_count=3; tx400.frame_length=2048; rx400.frame_length=2048; tx400.include_fcs=1; rx400.include_fcs=1;
-    // 顶层复位由时钟线程释放；等待全部接口稳定后再把事务交给 driver，避免 reset 丢弃预取副本。
+    // 等所有接口复位释放后再发事务，否则复位会丢弃预取副本。
     wait (vif100.i_tx_rst_n && vif100.i_rx_rst_n &&
           vif200.i_tx_rst_n && vif200.i_rx_rst_n &&
           vif400.i_tx_rst_n && vif400.i_rx_rst_n);
@@ -80,8 +78,7 @@ class eth_seg_smoke_test extends uvm_test;
     phase.drop_objection(this);
   endtask
 
-  // 汇总每个速率的物理完成、monitor 重建和时序 coverage 计数；任何丢包或未覆盖
-  // 的连续/间歇节奏都在 report_phase 变成 UVM_ERROR，不能只依赖仿真退出码。
+  // 丢包或未覆盖的连续/间歇节奏在此报 UVM_ERROR，不只依赖仿真退出码。
   function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info("ETH_SMOKE_COUNTS", $sformatf(

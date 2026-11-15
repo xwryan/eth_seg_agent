@@ -1,6 +1,4 @@
-// seq_lib 基础 sequence：提供确定性/随机报文构造和错误字段入口，依赖 eth_seg_pkg 的事务/codec。
-// sequence 拥有生成的事务，driver 在 item_done 前深拷贝；物理完成语义由 sent_ap 决定。
-// 本类只操作字节事务，不假设 RATE；因此同一 sequence 可用于 100/200/400G agent。
+// 基础字节帧 sequence：确定性/随机报文构造与错误字段入口，不依赖 RATE，可用于 100/200/400G agent。
 class eth_seg_base_seq extends uvm_sequence #(eth_seg_seq_item);
   `uvm_object_utils(eth_seg_base_seq)
 
@@ -13,12 +11,11 @@ class eth_seg_base_seq extends uvm_sequence #(eth_seg_seq_item);
   bit random_length = 1;
   int unsigned inter_frame_gap = 0; // 写入 item.gap_segments，单位是包后有效 idle segment。
 
-  // 初始化 sequence 身份；报文字节在 body 中按所选长度创建。
   function new(string name = "eth_seg_base_seq");
     super.new(name);
   endfunction
 
-  // 以可复现的索引填充 Ethernet DA/SA/Type 和 payload，最小 9B 以满足 SOP/EOP 分段约束。
+  // 按索引可复现地填充 DA/SA/Type 与 payload；最小 9B 以满足 SOP/EOP 分段约束。
   virtual function void make_frame(ref eth_seg_seq_item item, int unsigned nbytes,
                                    int unsigned frame_index);
     if (nbytes < 9) nbytes = 9;
@@ -50,7 +47,6 @@ class eth_seg_base_seq extends uvm_sequence #(eth_seg_seq_item);
     item.direction = ETH_SEG_TX;
   endfunction
 
-  // 子类可覆写该 task 以增加特殊报文；默认连续产生 frame_count 个事务。
   virtual task body();
     eth_seg_seq_item item;
     int unsigned nbytes;
@@ -60,8 +56,7 @@ class eth_seg_base_seq extends uvm_sequence #(eth_seg_seq_item);
         nbytes = $urandom_range(max_frame_bytes, min_frame_bytes);
       else nbytes = min_frame_bytes;
       make_frame(item, nbytes, f);
-      // make_frame 已经生成了合法的 DA/SA/Type、payload 和（如启用的）FCS。
-      // 不再对 frame_bytes 二次 randomize，否则随机化会覆盖已计算的 CRC。
+      // 不对 frame_bytes 再 randomize，否则会覆盖 make_frame 已算好的 CRC。
       start_item(item);
       finish_item(item);
     end

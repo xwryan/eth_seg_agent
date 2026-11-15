@@ -1,7 +1,5 @@
-// src TX 驱动层：把字节事务切成并行 64-bit segments，并实现 ready→valid 两拍延迟。
-// prefetch 线程在 item_done 时仅转移深拷贝；ready 线程按正沿 clocking 采样，驱动线程在
-// 负沿更新私有代理，完成线程在正沿采样 EOP 后发布 sent_ap。各线程只借用 cfg/vif。
-// ready 历史由采样线程拥有；pending/active/encoded 是 driver 独占的事务副本与编码状态。
+// TX 驱动：把字节事务切成并行 64-bit segment，ready→valid 固定两拍延迟。
+// prefetch 深拷贝后尽早 item_done；ready 在正沿经 clocking 采样，驱动在负沿更新私有代理，正沿采到 EOP 后才发布 sent_ap。
 class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item);
   `uvm_component_param_utils(eth_seg_tx_driver#(RATE))
   localparam int NUM_SEGMENTS = RATE/25;
@@ -17,19 +15,16 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
   bit have_active = 0;
   bit ready_d1 = 0, ready_d2 = 0;
 
-  // 创建端口和队列；cfg 由 agent 在 build/connect 前注入，驱动不复制配置对象。
   function new(string name, uvm_component parent);
     super.new(name, parent);
     sent_ap = new("sent_ap", this);
   endfunction
 
-  // 判断发送队列、当前包及完成通知是否全部清空，用于 env 的 drain 等待。
   function bit is_idle();
     return pending.size() == 0 && !have_active && done_q.size() == 0;
   endfunction
 
-  // 预取 sequence 项的深拷贝并尽早 item_done；队列达到 max_pending 时反压 sequence。
-  // reset 期间丢弃副本，避免复位解除后意外续传旧包。
+  // 队列达到 max_pending 时反压 sequence；复位期间丢弃副本，避免复位解除后续传旧包。
   task prefetch_thread();
     eth_seg_seq_item req, cp;
     forever begin
@@ -44,9 +39,8 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 从统一正沿采样点保存 ready 历史，隔离 DUT 在正沿或负沿更新输出的差别。
-  // 正沿 t 更新 d2=ready[t-1]，随后负沿驱动它，正沿 t+1 才被采样，即固定两拍。
-  // 使用 input #1step 的 clocking 值，避免与 DUT 的同沿 NBA 输出产生调度竞争。
+  // 正沿 t 更新 d2=ready[t-1]，负沿驱动、正沿 t+1 被采样，即固定两拍；统一正沿采样隔离 DUT 在正/负沿更新输出的差别。
+  // 使用 input #1step 的 clocking 值，避免与 DUT 同沿 NBA 输出产生调度竞争。
   task sample_ready_thread();
     forever begin
       @(cfg.vif.tx_cb);
@@ -55,8 +49,7 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 将当前 packet 的若干 segment 组合到私有代理；EOP 后满足包间隔即可在同拍开始下一包。
-  // data 和所有边带在 valid=0 时保持上一次值，valid 仅由两拍 ready 历史决定。
+  // valid 只由两拍 ready 历史决定，valid=0 时 data 与全部边带保持上一次值；EOP 后满足包间隔即可在同一拍开始下一包。
   task drive_thread();
     bit next_valid;
     forever begin
@@ -103,8 +96,7 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
           cfg.vif.drv_tx_skip_crc[s] <= cfg.include_fcs;
           byte_ptr += nbytes;
           if (remaining <= 8) begin
-            // sent_ap 事务必须与 monitor 的可见字节一致：自动 FCS 已并入数组，
-            // 前导仍被 monitor 解码移除；因此这里复制编码结果而非发布原始 sequence 副本。
+            // sent_ap 必须与 monitor 可见字节一致（含自动 FCS、不含前导），因此发布编码结果而非原始 sequence 副本。
             eth_seg_seq_item sent = new("tx_sent_copy");
             sent.copy(active);
             sent.frame_bytes = new[encoded.size() - (cfg.preamble_passthrough ? 8 : 0)];
@@ -127,8 +119,7 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 在 EOP 所在正沿读取真实 valid/inframe，按并行 segment 数发布已真正采样的报文。
-  // reset 时清除待发布顺序，避免旧包在新一轮计数中出现。
+  // 在 EOP 所在正沿按真实 valid/inframe 发布已采样的报文；复位清空待发布队列，避免旧包计入新一轮。
   task completion_thread();
     forever begin
       @(posedge cfg.vif.i_clk_tx);
@@ -147,7 +138,6 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 检查配置、领取 TX 所有权并启动并发线程；组件停止时释放所有权。
   task run_phase(uvm_phase phase);
     string reason;
     if (cfg == null || !cfg.validate(reason)) `uvm_fatal("ETH_TX_CFG", reason)
@@ -161,7 +151,6 @@ class eth_seg_tx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     forever @(posedge cfg.vif.i_clk_tx);
   endtask
 
-  // release_phase 释放接口占用；正常 UVM 终止由父 phase kill 并发线程。
   function void final_phase(uvm_phase phase);
     if (cfg != null && cfg.vif != null) cfg.vif.release_tx();
   endfunction

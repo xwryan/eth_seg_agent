@@ -1,5 +1,4 @@
-// 定向 frame sequence：通过公开字段覆盖基础 sequence，便于回归组合连续、间歇、FCS 与错误场景。
-// 该类不直接等待物理完成；测试应等待 scoreboard.is_idle() 或 monitor 计数达到预期。
+// 定向 frame sequence：通过公开字段组合连续、间歇、FCS 与错误场景；不等待物理完成。
 class eth_seg_frame_seq extends eth_seg_base_seq;
   `uvm_object_utils(eth_seg_frame_seq)
 
@@ -11,7 +10,7 @@ class eth_seg_frame_seq extends eth_seg_base_seq;
     random_length = 0;
   endfunction
 
-  // 使用单一指定长度生成一批内容不同的报文，避免随机数组约束覆盖 make_frame 数据。
+  // 固定长度、内容各异；不用随机数组约束，以免覆盖 make_frame 数据。
   virtual task body();
     eth_seg_seq_item item;
     int unsigned nbytes;

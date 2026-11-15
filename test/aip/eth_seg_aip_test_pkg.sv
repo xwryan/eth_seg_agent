@@ -1,6 +1,4 @@
-// test/aip UVM 验证层：test 不创建任何 agent/env，只检查 bind agent 的 monitor。
-// 依赖 AIP、eth_seg_pkg 和示例命令 package；test 拥有四个只读 subscriber。
-// Tcl 控制发包与参数，SV 独立核对物理接收字节，防止仅凭命令 OK 判断通过。
+// AIP 集成测试：Tcl 控制发包与改参，SV 只检查 bind agent monitor 的物理字节，不凭命令 OK 判通过。
 package eth_seg_aip_test_pkg;
   import uvm_pkg::*;
   import aip_core_pkg::*;
@@ -9,18 +7,16 @@ package eth_seg_aip_test_pkg;
   import eth_seg_aip_pkg::*;
   `include "uvm_macros.svh"
 
-  // 每个 IP 的期望队列归 subscriber；只比较 monitor 的真实采样，不读取 driver 队列。
   class eth_aip_port_check #(int RATE = 100) extends uvm_subscriber#(eth_seg_seq_item);
     eth_seg_agent#(RATE) agt;
     int lengths[$], indices[$];
     int received = 0;
 
-    // 名字与 AGENT_NAME 一致，便于读取该端口的类型化句柄并诊断串包。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 获取已有 agent；验证本例仅使用 cfg 默认值，且没有依赖 env 创建组件。
+    // 确认 agent 由 bind 创建且沿用 cfg 默认值。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       if (!uvm_config_db#(eth_seg_agent#(RATE))::get(this, "", {get_name(), "_agent"}, agt))
@@ -30,13 +26,12 @@ package eth_seg_aip_test_pkg;
         `uvm_fatal("AIP_TEST_DEFAULT", "bind must retain cfg defaults")
     endfunction
 
-    // build 全部完成后订阅 TX；不创建/转接任何 sequencer。
     function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
       agt.tx_monitor.item_collected_port.connect(analysis_export);
     endfunction
 
-    // 构建一条 Tcl count 命令的期望；基础 sequence 的帧编号在每次命令从零开始。
+    // 基础 sequence 的帧编号在每条命令中从零开始。
     function void expect_batch(int count, int length);
       for (int n = 0; n < count; n++) begin
         lengths.push_back(length);
@@ -44,8 +39,7 @@ package eth_seg_aip_test_pkg;
       end
     endfunction
 
-    // 独立重建基础 sequence 的 DA/SA/Type/payload 公式，检查格式、长度及全部字节。
-    // 超出期望数量的包也报错，不能因期望队列已清空而忽略尾包。
+    // 独立重建基础 sequence 的帧公式逐字节比较；超出期望数量的尾包同样报错。
     function void write(eth_seg_seq_item t);
       int length, index;
       received++;
@@ -71,25 +65,22 @@ package eth_seg_aip_test_pkg;
       end
     endfunction
 
-    // 只有全部期望被消费且 driver/monitor 无在途事务时才允许结束仿真。
     function bit complete();
       return lengths.size() == 0 && agt.tx_driver.is_idle() && agt.tx_monitor.is_idle();
     endfunction
   endclass
 
-  // base test 只运行一个 Tcl bridge；bind module 是 agent 的唯一创建入口。
   class eth_seg_aip_test extends uvm_test;
     `uvm_component_utils(eth_seg_aip_test)
     eth_aip_port_check#(100) eth0, eth3;
     eth_aip_port_check#(200) eth1;
     eth_aip_port_check#(400) eth2;
 
-    // test 由 run_test 创建，四个 subscriber 由 build 创建并归其管理。
     function new(string name = "eth_seg_aip_test", uvm_component parent = null);
       super.new(name, parent);
     endfunction
 
-    // 期望来自 Tcl 用例的明确请求；eth0 第二次改长度，其他端口应不受影响。
+    // 期望对应 send.tcl：eth0 第二批改长度，其他端口不受影响。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       eth0 = new("eth0", this);
@@ -103,8 +94,8 @@ package eth_seg_aip_test_pkg;
       eth3.expect_batch(4, 512);
     endfunction
 
-    // 复位解除后接收 Tcl；end_test 退出 bridge 后继续等真实发送结束，最多 10 us。
-    // 通过静态表核对四个不同对象，证明同速率 eth0/eth3 没有共用一个 sqr。
+    // end_test 退出 bridge 后继续等待真实发送结束（最多 10 us）；
+    // 静态表中四个对象互不相同，证明同速率的 eth0/eth3 没有共用 sqr。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       if (eth_seg_sequencer::sqr.num() != 4 ||

@@ -1,6 +1,5 @@
-// src 配置层：将编译期速率类型与运行期角色、格式、节奏策略绑定。
-// agent 持有配置，子组件借用同一对象；运行中不应改变格式或队列深度。
-// 类型参数贯穿 vif，避免不同宽度接口通过无类型句柄被误连接。
+// agent 配置：编译期 RATE（贯穿 vif 类型，防止误连不同宽度接口）与运行期角色、格式、节奏策略。
+// 子组件共享同一对象；运行中不应改变格式或队列深度。
 class eth_seg_config #(int RATE = 100) extends uvm_object;
   `uvm_object_param_utils(eth_seg_config#(RATE))
 
@@ -19,15 +18,12 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
   int load_min_pct = 10, load_max_pct = 100;
   int max_pending = 64;
 
-  // 创建独立配置对象；vif 必须由 testbench 显式赋值后再构建 agent。
   function new(string name = "eth_seg_config");
     super.new(name);
   endfunction
 
-  // 将本帧占用的有效 segment 数换算为包后 idle 段数，供 TX/RX 共用同一负载定义。
-  // 随机模式每帧选一次百分比，独立于固定 traffic_load_pct；向上取整使目标负载为上限。
-  // 显式 gap_segments 是最小间隔，与负载间隔取较大者；ready/valid 气泡不消费这些段。
-  // 返回值由 driver 倒计数；负数输入/溢出明确 fatal，避免错误间隔变成无限等待。
+  // 把本帧占用的有效段数换算为包后 idle 段数（TX/RX 共用）：随机模式每帧抽一次负载百分比，向上取整使目标负载为上限；
+  // 显式 gap 为下限，取两者较大值；ready/valid 气泡不消费这些段；负数或溢出 fatal。
   function int gap_after_frame(input int unsigned frame_segments, input int minimum_gap);
     int pct;
     longint unsigned load_gap;
@@ -48,7 +44,7 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
     return (load_gap > minimum_gap) ? int'(load_gap) : minimum_gap;
   endfunction
 
-  // 校验全部静态约束并返回首个原因；不发 report，调用者决定 fatal 的组件上下文。
+  // 只返回首个违例原因、不发 report，由调用者在自己的组件上下文中 fatal。
   function bit validate(output string reason);
     reason = "";
     if (!(RATE inside {100, 200, 400})) reason = "RATE must be 100, 200 or 400";

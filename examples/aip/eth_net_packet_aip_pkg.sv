@@ -1,7 +1,5 @@
-// examples/aip 网络报文命令层：依赖 aip_core/update、net_packet_pkg 和 eth_flow_pkg。
-// 先编译 AIP 再编译 net_packet_pkg，使 packet.load_params 能读取 Tcl 参数。
-// sequence 拥有每次生成的 packet 和独立流控模型；静态 sqr 由 bind agent 拥有。
-// Tcl 每次传入流控参数，不持久注册为 env 配置；此层不创建 env 或 agent。
+// AIP Tcl 网络发包命令示例：每帧按 agent 名读取 net_packet 参数，经 eth_flow_seq 限速发送。
+// 需先编译 aip_core 再编译 net_packet_pkg；sequence 持有每次生成的 packet 与流控模型，本层不创建 env/agent。
 package eth_net_packet_aip_pkg;
   import uvm_pkg::*;
   import aip_core_pkg::*;
@@ -11,17 +9,14 @@ package eth_net_packet_aip_pkg;
   import eth_flow_pkg::*;
   `include "uvm_macros.svh"
 
-  // count/循环由 eth_base_seq 拥有，节流由 eth_flow_seq 负责；这里连接 Tcl 与业务内容。
   class eth_net_packet_aip_seq extends eth_flow_seq;
     `uvm_object_utils(eth_net_packet_aip_seq)
 
-    // count 由 aip_cmd_seq 设置；默认生成一帧 256B IPv4/UDP 报文。
     function new(string name = "eth_net_packet_aip_seq");
       super.new(name);
     endfunction
 
-    // 缺省参数沿用本次新对象默认值；显式实数必须完整解析且为有限正数。
-    // 不用 atoi/int 中转，保留 415039062.5Hz 等小数频率，拒绝带尾随垃圾的输入。
+    // 不经 atoi/int 中转，以保留 415039062.5Hz 等小数；显式值必须完整解析为有限正数，缺省时保留对象默认值。
     protected function bit read_real_arg(string args, string key, inout real value);
       string raw = aip_cmd::get_arg(args, key);
       string trailing;
@@ -36,8 +31,7 @@ package eth_net_packet_aip_pkg;
       return 1;
     endfunction
 
-    // aip_cmd_seq 自动处理 count/time；本层按命令对象名读取其余本次参数。
-    // 不重新加载 send config、不覆写 agent cfg；未知流控模式和非法 IFG 明确失败。
+    // count/time 由 aip_cmd_seq 处理，其余参数按命令对象名读取；不覆写 agent cfg，未知流控模式和非法 IFG 直接失败。
     virtual task body();
       aip_cmd command = aip_cmd::get_handle(get_name());
       string args, raw;
@@ -68,9 +62,8 @@ package eth_net_packet_aip_pkg;
       super.body();
     endtask
 
-    // 每帧按实际 agent 名字读取协议模板、长度及协议头参数，保证多 IP 参数隔离。
-    // pkt_len 不含前导/Ethernet FCS；负值/超长或容纳不下协议头时在打包前失败。
-    // load_params 后显式 do_pack，避免修改字段后继续使用旧 raw_data。
+    // 每帧按实际 agent 名读取模板、长度与协议头参数（多 IP 参数隔离）；pkt_len 不含前导/FCS，非法时在打包前失败。
+    // load_params 后显式 do_pack，避免修改字段后仍使用旧 raw_data。
     virtual function packet create_packet(int unsigned packet_index);
       eth_seg_sequencer sqr_handle = require_sqr(1);
       packet generated;
@@ -95,14 +88,12 @@ package eth_net_packet_aip_pkg;
       return generated;
     endfunction
 
-    // 成功入队才报告活动；此通知不承担 Monitor 的物理完成语义。
     virtual function void packet_queued(int unsigned packet_index);
       aip_activity::tick();
     endfunction
   endclass
 
-  // 查询表达式在 Tcl 命令执行时求值，必须在 UVM connect 完成后运行 bridge。
-  // 用户只按自己的 AGENT_NAME 修改映射；同速率多个 IP 也各自拥有独立 sequencer。
+  // get_sqr 在命令执行时求值，bridge 必须在 connect 完成后运行；用户按自己的 AGENT_NAME 增减这组映射。
   `aip_cmd_seq(eth0_net_send, eth_net_packet_aip_seq, eth_seg_sequencer::get_sqr("eth0"))
   `aip_cmd_seq(eth1_net_send, eth_net_packet_aip_seq, eth_seg_sequencer::get_sqr("eth1"))
   `aip_cmd_seq(eth2_net_send, eth_net_packet_aip_seq, eth_seg_sequencer::get_sqr("eth2"))

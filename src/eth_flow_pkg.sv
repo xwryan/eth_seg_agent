@@ -1,6 +1,4 @@
-// src 可选流控适配层：依赖 eth_net_packet_pkg 和外部 flow_control_pkg。
-// 流控类型由先编译的 flow_control_pkg 统一拥有，本层 import 后只声明 Ethernet 序列。
-// sequence 持有模型及小数预算，基础 agent/net_packet 不反向依赖本层。
+// 可选流控适配层：在 flow_control_pkg 与 eth_net_packet_pkg 之上声明 eth_flow_seq，基础 agent 不反向依赖本层。
 package eth_flow_pkg;
   timeunit 1ns;
   timeprecision 1fs;

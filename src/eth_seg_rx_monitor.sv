@@ -1,8 +1,5 @@
-// src 观察层：RX segmented MAC 引脚监视器。
-// reset_state_port 发布本方向复位变化；组件拥有半包，hub 拥有已完成包的订阅副本。
-// 组件只在 o_rx_mac_valid 为 1 时消费各 segment；invalid 拍完全忽略数据和边带，
-// 因而可跨任意气泡保存当前包。EOP 段提取 empty、fcs_error、error、status_data，
-// 合法 CRC 错误通过事务字段传播而不触发 uvm_error；复位中断包计入 aborted_packets。
+// RX 引脚 monitor：只在 o_rx_mac_valid=1 时消费 segment，invalid 拍忽略数据与边带，当前包可跨任意气泡保留。
+// EOP 段提取 empty/fcs_error/error/status_data；CRC 错误随事务传播而不报 uvm_error，复位中断的包计入 aborted_packets。
 class eth_seg_rx_monitor #(int RATE = 100) extends uvm_component;
   `uvm_component_param_utils(eth_seg_rx_monitor#(RATE))
 
@@ -19,14 +16,12 @@ class eth_seg_rx_monitor #(int RATE = 100) extends uvm_component;
   eth_seg_byte_queue_t packet_bytes;
   eth_seg_seq_item packet_item;
 
-  // 创建发布端口；monitor 不拥有 virtual interface 的生命周期。
   function new(string name = "eth_seg_rx_monitor", uvm_component parent = null);
     super.new(name, parent);
     item_collected_port = new("item_collected_port", this);
     reset_state_port = new("reset_state_port", this);
   endfunction
 
-  // 取得父 agent 提供的配置和虚接口，缺失时立即终止以避免静默空循环。
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     if (cfg == null) void'(uvm_config_db#(eth_seg_config#(RATE))::get(this, "", "cfg", cfg));
@@ -34,19 +29,17 @@ class eth_seg_rx_monitor #(int RATE = 100) extends uvm_component;
     if (vif == null) `uvm_fatal("ETH_SEG_RX_MON_CFG", "RX monitor virtual interface is null")
   endfunction
 
-  // 返回无未完成报文；复位丢弃的包不会留在任何内部队列。
   function bit is_idle();
     return !in_packet && packet_bytes.size() == 0;
   endfunction
 
-  // 按 segment 号和字节数提取低位优先的数据；只由有效拍调用。
+  // segment 内低字节在前；只在有效拍调用。
   function void append_segment(input int seg, input int nbytes);
     for (int b = 0; b < nbytes; b++)
       packet_bytes.push_back(vif.rx_cb.o_rx_mac_data[seg*64 + b*8 +: 8]);
     bytes_seen += nbytes;
   endfunction
 
-  // EOP 完成事务解析并发布；错误边带仅记录在事务中，CRC 错误允许继续比较。
   task automatic finish_packet(input int seg, input int empty);
     string reason;
     bit ok;
@@ -70,13 +63,11 @@ class eth_seg_rx_monitor #(int RATE = 100) extends uvm_component;
     in_packet = 0;
   endtask
 
-  // 在 RX 正沿逐 segment 解析；invalid 周期不改变 segment_index、边界或数据状态。
   task run_phase(uvm_phase phase);
     bit ended_this_cycle;
     forever begin
       @(vif.rx_cb);
-      // 同一采样域首次同步及复位边沿通知；先清理 hub，再消费本拍数据。
-      // X 复位由接口检查负责，此处只将确定的低电平视为断言。
+      // 首次同步及复位边沿时通知（先清 hub，再消费本拍数据）；X 复位由接口检查，这里只把确定的低电平视为断言。
       if (!reset_observed || previous_reset != (vif.rx_cb.i_rx_rst_n === 1'b0)) begin
         reset_observed = 1;
         previous_reset = (vif.rx_cb.i_rx_rst_n === 1'b0);

@@ -1,22 +1,19 @@
-// test/timing 时序审查：独立的 pin 段计数器检查包间隔，monitor 检查字节和完成通知。
-// 依赖产品 driver/monitor/interface；case 拥有组件、事务快照和 pin 记录，借用 HDL vif。
-// DUT ready 由 HDL 分别在正/负沿寄存，避免仅用 VIP ready driver 掩盖采样相位错误。
+// 时序审查测试：独立 pin 段计数器检查包间隔，monitor 检查字节与完成通知；
+// DUT ready 由 HDL 分别在正/负沿寄存，避免只用 VIP ready driver 掩盖采样相位错误。
 package eth_timing_test_pkg;
   import uvm_pkg::*;
   import eth_seg_pkg::*;
   import eth_seg_types_pkg::*;
   `include "uvm_macros.svh"
 
-  // 只负责送出已有事务，测试在外部检查物理完成，不能以 finish_item 结束用例。
   class timing_seq extends uvm_sequence#(eth_seg_seq_item);
     eth_seg_seq_item items[$];
 
-    // 刺激事务由 case 构造并在发送期间保持不变。
     function new(string name = "timing_seq");
       super.new(name);
     endfunction
 
-    // 按队列顺序交给 driver，max_pending 边界应由 driver 自行反压。
+    // max_pending 边界由 driver 自行反压。
     task body();
       foreach (items[i]) begin
         start_item(items[i]);
@@ -25,16 +22,14 @@ package eth_timing_test_pkg;
     endtask
   endclass
 
-  // 收集真实 monitor/driver 通知的副本，避免回调之后对象复用影响比较。
+  // 保存回调事务的副本，避免对象复用影响比较。
   class timing_sink extends uvm_subscriber#(eth_seg_seq_item);
     eth_seg_seq_item items[$];
 
-    // 接收器由 case 创建，随 UVM 层次退出。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 每次回调保存独立数据；不改变来源事务，也不引入仿真延时。
     function void write(eth_seg_seq_item t);
       eth_seg_seq_item cp = new("observed");
       cp.copy(t);
@@ -59,7 +54,6 @@ package eth_timing_test_pkg;
     bit tx_packet = 0, rx_packet = 0, done = 0;
     string scenario = "all";
 
-    // case 名称匹配 HDL config_db 路径，不依赖 factory 特化字符串。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
@@ -128,8 +122,7 @@ package eth_timing_test_pkg;
       end
     endtask
 
-    // 复位覆盖两种时钟的多个正/负沿；解除在边沿之外，TX/RX 分开释放。
-    // 此处只清测试快照；产品 driver/monitor 必须自行丢弃在途状态。
+    // 复位覆盖两种时钟的多个正/负沿，在边沿之外解除且 TX/RX 分开释放；产品 driver/monitor 必须自行丢弃在途状态。
     task reset_link();
       #1ns;
       ctl.tx_rst_n = 0; ctl.rx_rst_n = 0; ctl.ready_request = 0;
@@ -196,8 +189,7 @@ package eth_timing_test_pkg;
         `uvm_error("TIMING_RX_GAP", $sformatf("packet=%0d gap=%0d minimum=%0d", i, rx_sop[i]-rx_eop[i-1]-1, minimum))
     endfunction
 
-    // 运行独立阶段：ready 单拍脉冲/包内停顿、显式间隔、固定/随机负载和中途复位。
-    // SCENARIO 用于在未修复基线上分别复现，默认 all 作为固定回归。
+    // 阶段：ready 单拍脉冲/包内停顿、显式间隔、固定/随机负载、中途复位；SCENARIO 可单独选择，默认 all。
     task exercise();
       if (scenario inside {"all", "ready"}) begin
         timing_seq a = new("ready_tx"), b = new("ready_rx");
@@ -273,21 +265,18 @@ package eth_timing_test_pkg;
       done = 1;
     endtask
 
-    // 观察线程与刺激并行，UVM phase 结束时统一终止观察线程。
     task run_phase(uvm_phase phase);
       fork track_tx(); track_rx(); join_none
       exercise();
     endtask
   endclass
 
-  // 六条 link 同时执行，测试只持有一个 objection，HDL watchdog 保证卡死可见。
   class eth_timing_test extends uvm_test;
     `uvm_component_utils(eth_timing_test)
     timing_case#(100) c100[2];
     timing_case#(200) c200[2];
     timing_case#(400) c400[2];
 
-    // 构造 UVM test 身份，子 case 由 build 创建。
     function new(string name = "eth_timing_test", uvm_component parent = null);
       super.new(name,parent);
     endfunction
@@ -302,7 +291,6 @@ package eth_timing_test_pkg;
       end
     endfunction
 
-    // 所有 case 完成后才结束；错误仍由 check_log.py 从 UVM summary/native error 判定。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       foreach (c100[i]) wait (c100[i].done && c200[i].done && c400[i].done);

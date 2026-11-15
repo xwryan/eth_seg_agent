@@ -1,8 +1,5 @@
-// bind 集成层：参照 module 内封装 interface + root agent 的用法，绑定已有 DUT net。
-// 依赖 eth_seg_if、eth_seg_types_pkg、eth_seg_pkg 和 eth_seg_protocol_checker。
-// wrapper 拥有 interface；agt 的生命周期由 UVM root 管理，cfg 由 wrapper 创建后共享。
-// initial 内仅有零时间的同步创建；顶层 initial 先 #0，再调用唯一 run_test()。
-// bind 只暴露名字和速率，行为配置保留 eth_seg_config 默认值，由用户在 build 前调整。
+// bind 封装：在已有 DUT net 上实例化 interface、root agent 与协议 checker；只暴露名字和速率，行为配置沿用 cfg 默认值，
+// 由用户在 build 前调整。initial 内只做零时间同步创建，顶层先 #0 再调用唯一的 run_test()。
 module eth_seg_bind_wrapper #(
   parameter int RATE = 100,
   parameter string AGENT_NAME = "",
@@ -41,9 +38,8 @@ module eth_seg_bind_wrapper #(
   eth_seg_config#(RATE) cfg;
   string resolved_name;
 
-  // 公共网络只用于读取实际 DUT 引脚；输出必须来自 drv_*，避免 assign 环路。
-  // interface 内部还存在 strong 代理驱动，supply 回读保证 monitor 看见外部解析结果，
-  // 包括冲突的 X，而不是只看见 agent 的驱动意图。这里的强度不反向驱动 DUT。
+  // 公共网络只回读实际 DUT 引脚，输出必须来自 drv_* 以免 assign 环路；supply 强度压过 interface 内部的 strong 代理，
+  // 使 monitor 看到外部解析结果（含冲突 X）而非 agent 的驱动意图，且不反向驱动 DUT。
   assign (supply1, supply0) u_eth_if.i_tx_mac_data = i_tx_mac_data;
   assign (supply1, supply0) u_eth_if.i_tx_mac_valid = i_tx_mac_valid;
   assign (supply1, supply0) u_eth_if.i_tx_mac_inframe = i_tx_mac_inframe;
@@ -59,15 +55,13 @@ module eth_seg_bind_wrapper #(
   assign (supply1, supply0) u_eth_if.o_rx_mac_error = o_rx_mac_error;
   assign (supply1, supply0) u_eth_if.o_rx_mac_status_data = o_rx_mac_status_data;
 
-  // 领取驱动权后一直驱动，包含 reset 和 valid=0；不能用 valid 做高阻门控，
-  // 否则 TX invalid hold 和两拍 ready 响应会被被接管的原驱动破坏。
-  // agent 按 cfg.role / cfg.is_active 创建 driver，driver 领取所属方向的所有权。
-  // 因此不再用静态 ROLE 参数二次门控，用户在 build 前改 cfg 也能正确选择方向。
+  // 领取后持续驱动（含 reset/valid=0），不能用 valid 做高阻门控，否则原驱动会破坏 invalid hold 与两拍 ready 响应；
+  // 方向由 driver 按 cfg.role/is_active 领取（不用静态 ROLE 参数门控），build 前改 cfg 也生效。
   wire tx_enable = u_eth_if.tx_drive_enabled;
   wire rx_enable = u_eth_if.rx_drive_enabled;
   wire ready_enable = u_eth_if.ready_drive_enabled;
 
-  // 固定采用图片中的 supply 接管方式；未领取的方向始终为 Z。
+  // 采用 supply 强度接管；未领取的方向始终为 Z。
   generate
     begin : g_supply
       assign (supply1, supply0) i_tx_mac_data = tx_enable ? u_eth_if.drv_tx_data : 'z;
@@ -87,8 +81,8 @@ module eth_seg_bind_wrapper #(
     end
   endgenerate
 
-  // 默认命名来自绑定层次，转换成合法 UVM 子组件名；显式名称必须全仿真唯一。
-  // 创建在 time-0 完成，禁止在 wrapper 中 run_test 或再次在 env 内创建同名 agent。
+  // 默认名取自绑定层次并转换为合法 UVM 名，显式名称须全仿真唯一；
+  // time-0 创建，wrapper 内不得 run_test，env 内也不得再建同名 agent。
   initial begin : create_agent
     uvm_root root;
     string reason;
@@ -118,9 +112,8 @@ module eth_seg_bind_wrapper #(
     uvm_config_db#(virtual eth_seg_if#(RATE))::set(null, "uvm_test_top*", {resolved_name, "_vif"}, u_eth_if);
   end
 
-  // checker 读取绑定端口；开关来自默认 cfg，用户需在 reset/build 前设置，
-  // 不支持在已有 ready 历史或在途报文中途开关检查器。
-  // VCS 不允许连续赋值直接引用 class handle；各时钟负沿采样配置，供下一正沿使用。
+  // checker 开关取自 cfg，需在 reset/build 前设置，不支持中途开关；VCS 不允许连续赋值引用 class handle，
+  // 因此在各时钟负沿采样配置，供下一正沿使用。
   bit check_tx_enable = 0, check_rx_enable = 0;
   always @(negedge i_clk_tx)
     check_tx_enable <= (cfg != null) ? cfg.enable_protocol_check : 1'b0;

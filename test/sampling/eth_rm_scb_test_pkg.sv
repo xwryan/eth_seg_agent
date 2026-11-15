@@ -1,6 +1,4 @@
-// test/sampling 整包预测链路测试：两个独立刺激源模拟 DUT 入口/出口，验证公共采样流程。
-// 不包含厂商或用户 DUT；出口字节由独立输入模板产生，不从 RM/hub 回灌实际数据。
-// test 拥有 agent、控制接口借用句柄和示例组件，所有结束条件都有计数及超时约束。
+// 整包预测链路测试：两个独立刺激源模拟 DUT 入口/出口（不含 DUT），出口字节由独立模板产生，不从 RM/hub 回灌。
 package eth_rm_scb_test_pkg;
   import uvm_pkg::*;
   import eth_seg_types_pkg::*;
@@ -14,7 +12,6 @@ package eth_rm_scb_test_pkg;
   class delayed_packet_rm extends eth_rm_scb_example;
     time prediction_delay;
 
-    // 由 case 直接创建，保持普通示例的 agent 借用关系。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
@@ -32,12 +29,10 @@ package eth_rm_scb_test_pkg;
   class sample_mismatch_catcher extends uvm_report_catcher;
     int caught;
 
-    // 独立统计一个预期坏包。
     function new();
       super.new("sample_mismatch");
     endfunction
 
-    // 其它严重级别或 ID 一律继续交给 UVM。
     virtual function action_e catch();
       if (get_severity() == UVM_ERROR && get_id() == "ETH_SEG_SB_TX") begin
         caught++;
@@ -47,7 +42,7 @@ package eth_rm_scb_test_pkg;
     endfunction
   endclass
 
-  // 一个速率一条独立链路；例程只借用 mac，client 专供模拟出口引脚刺激。
+  // 每个速率一条链路：示例只借用 mac，client 只用来模拟出口引脚刺激。
   class sampling_rate_case #(int RATE = 100) extends uvm_component;
     eth_seg_agent#(RATE) client, mac;
     eth_seg_config#(RATE) client_cfg, mac_cfg;
@@ -55,12 +50,10 @@ package eth_rm_scb_test_pkg;
     delayed_packet_rm model;
     bit done;
 
-    // typed vif 与 RATE 的一致性在 build 校验。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 创建测试专用两端刺激，示例组件自身不创建 agent；完整名按当前 case 隔离。
     function void build_phase(uvm_phase phase);
       virtual eth_seg_if#(RATE) vif;
       super.build_phase(phase);
@@ -80,7 +73,7 @@ package eth_rm_scb_test_pkg;
       model.agent_name = mac.get_full_name();
     endfunction
 
-    // 独立构造网络报文；入口和出口分别调用，不能共享被测预测的对象。
+    // 入口与出口分别调用，不共享被测预测的对象。
     function packet reference_packet(int salt, int length = 256);
       packet p = new();
       eth_header header;
@@ -94,7 +87,6 @@ package eth_rm_scb_test_pkg;
       return p;
     endfunction
 
-    // 向一个方向入队，是否完成仍由下方 drain 核对真实 Monitor 和采样计数。
     task send_frames(bit is_rx, int salt, int count = 3, int length = 256, bit corrupt = 0);
       eth_base_seq seq = new("stimulus");
       seq.pkt = reference_packet(salt, length);
@@ -103,7 +95,6 @@ package eth_rm_scb_test_pkg;
       seq.start(is_rx ? mac.sequencer : client.sequencer);
     endtask
 
-    // 有界排空检查同时包含当前 epoch 的处理数和 SCB 累计匹配/失败数。
     task drain(int matched, int mismatches, int epoch_packets);
       for (int cycles = 0; cycles < 5000; cycles++) begin
         if (model.predictions == epoch_packets && model.outputs == epoch_packets &&
@@ -197,7 +188,6 @@ package eth_rm_scb_test_pkg;
       if (catcher.caught != 1) `uvm_fatal("ETH_SAMPLING_NEGATIVE", "expected one precise mismatch")
     endtask
 
-    // 测试对象不自行结束 UVM；顶层等三速率全部完成后才释放 objection。
     task run_phase(uvm_phase phase);
       reset_link();
       arrival_orders();
@@ -209,19 +199,16 @@ package eth_rm_scb_test_pkg;
     endtask
   endclass
 
-  // 三速率并行使用相同示例 API；包内容、复位和队列在实例间完全独立。
   class eth_rm_scb_test extends uvm_test;
     `uvm_component_utils(eth_rm_scb_test)
     sampling_rate_case#(100) r100;
     sampling_rate_case#(200) r200;
     sampling_rate_case#(400) r400;
 
-    // 身份由 run_test/factory 管理。
     function new(string name = "eth_rm_scb_test", uvm_component parent = null);
       super.new(name, parent);
     endfunction
 
-    // 名称与 HDL 发布的 typed vif 路径一致。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       r100 = new("r100", this);
@@ -229,7 +216,6 @@ package eth_rm_scb_test_pkg;
       r400 = new("r400", this);
     endfunction
 
-    // HDL 侧100us保护所有等待；完成标志只在所有 case 真正排空后发布。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       wait (r100.done && r200.done && r400.done);

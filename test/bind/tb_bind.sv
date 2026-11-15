@@ -1,6 +1,5 @@
-// test/bind HDL 验证层：提供只有解析 net 的目标壳，通过模块类型 bind 注入三个 wrapper。
-// 目标壳拥有原始 strong 驱动；wrapper 拥有 interface，UVM root 拥有 agent。
-// 四个 IP 覆盖三种速率；验证 supply 接管、默认 cfg 和 #0 启动，均使用真实 bind。
+// bind 测试顶层：仅含解析 net 的目标壳，按模块类型 bind 注入 wrapper；
+// 四个 IP 覆盖三种速率，验证 supply 接管、默认 cfg 和 #0 启动。
 `timescale 1ns/1ps
 module eth_seg_bind_target #(
   parameter int RATE = 100,
@@ -43,8 +42,7 @@ module eth_seg_bind_target #(
   assign o_rx_mac_error = OVERRIDE ? '1 : 'z;
   assign o_rx_mac_status_data = OVERRIDE ? '1 : 'z;
 
-  // 比较的是实际解析后的全部引脚和每个 wrapper 的公开 interface，包含 invalid 拍。
-  // 任一字段漏连/错位、passive 反向驱动或原 strong 驱动未被接管都会在这里暴露。
+  // 比较实际解析的全部引脚与各 wrapper interface（含 invalid 拍）：漏连、错位、passive 反驱或未接管原驱动都会暴露。
   localparam int VIEW_WIDTH = 2*DATA_WIDTH + 16*NUM_SEGMENTS + 3;
   wire [VIEW_WIDTH-1:0] pins_view = {
     i_tx_mac_data,
@@ -112,8 +110,7 @@ module eth_seg_bind_target #(
   };
   int pin_checks = 0;
 
-  // 延后一个精度单位检查，避开同一时刻其他时钟负沿的 NBA/continuous assign 收敛。
-  // reset 内允许 time-0 尚未领取驱动权，reset 外则每拍都必须完全已知且正确读回。
+  // 延后一个精度单位检查，避开同一时刻其它时钟负沿的 NBA/assign 收敛；reset 内允许 time-0 尚未领取驱动权。
   always @(posedge i_clk_tx) begin
     if (i_tx_rst_n && i_rx_rst_n) begin
       #1ps;
@@ -125,8 +122,7 @@ module eth_seg_bind_target #(
   end
 endmodule
 
-// bind 仅传 RATE 和名字；cfg 使用默认值，测试在 #0 后、run_test 前自行调整。
-// 同一 module 类型的四个实例都会绑定；observer 留空测试层次自动命名。
+// 按模块类型 bind，四个实例都会绑定；只传 RATE 与名字，observer 留空以测试按层次自动命名。
 bind eth_seg_bind_target eth_seg_bind_wrapper #(
   .RATE(RATE), .AGENT_NAME({PORT_NAME, "_client"})
 ) u_client (.*);
@@ -139,7 +135,7 @@ bind eth_seg_bind_target eth_seg_bind_wrapper #(
   .RATE(RATE)
 ) u_observer (.*);
 
-// 顶层只生成时钟/复位并协调 time-0；不能在任何 wrapper 内各自调用 run_test。
+// 顶层统一调用 run_test，wrapper 内不得各自调用。
 module tb_bind;
   import uvm_pkg::*;
   import eth_seg_bind_test_pkg::*;
@@ -161,8 +157,7 @@ module tb_bind;
   initial #41ns rst_n = 1;
 
   initial begin
-    // 所有 wrapper 在 Active 区同步创建 cfg/agent；#0 进入 Inactive 区再取句柄。
-    // 此处还没有 sequencer，后续 run_test 的 build/connect 才会创建并注册它。
+    // wrapper 在 Active 区创建 cfg/agent，#0 进入 Inactive 区后再取句柄；sequencer 要到 run_test 的 build/connect 才创建。
     #0;
     bind_rate_case#(100)::configure(link100.u_client.cfg, link100.u_mac.cfg, link100.u_observer.cfg);
     bind_rate_case#(200)::configure(link200.u_client.cfg, link200.u_mac.cfg, link200.u_observer.cfg);
@@ -175,7 +170,7 @@ module tb_bind;
     run_test("eth_seg_bind_test");
   end
 
-  // 独立 HDL watchdog 也覆盖 run_test 前的初始化卡死；正常 UVM finish 会提前结束仿真。
+  // HDL watchdog 也覆盖 run_test 之前的初始化卡死。
   initial begin
     #25us;
     $fatal(1, "ETH_BIND_STARTUP_TIMEOUT: test did not finish");

@@ -1,6 +1,4 @@
-# 根目录 VCS 构建入口：RATE 是原 smoke 回归标签（接口同时实例化 100/200/400）。
-# bind-test 验证实际 bind；aip/net-packet 目标使用外部依赖，构建目录互相独立。
-# 仿真应在 10.11.10.53 上执行，并预先载入该主机的 VCS/UVM/license 环境。
+# VCS 构建入口：RATE 只是 smoke 回归的构建标签（接口同时实例化 100/200/400G）；各目标使用独立的 BUILD 目录。
 .DEFAULT_GOAL := compile
 VCS ?= vcs
 RATE ?= 100
@@ -37,7 +35,7 @@ NET_SRC := $(AIP_CORE)/aip_core_pkg.sv $(NET_PACKET)/src/net_packet_pkg.sv \
            rtl/eth_seg_if.sv src/eth_seg_types.sv src/eth_seg_pkg.sv src/eth_net_packet_pkg.sv
 NET_TEST_SRC := $(NET_SRC) checker/eth_seg_protocol_checker.sv \
                 test/net_packet/eth_net_packet_test_pkg.sv test/net_packet/tb_net_packet.sv
-# 上游 package 统一拥有全部流控类型；先编译公共入口，再编译本工程适配 package。
+# 先编译 flow_control_pkg 公共入口，再编译本工程的适配 package。
 FLOW_INC := $(addprefix +incdir+$(FLOW_CONTROL)/src/,common models core monitor)
 FLOW_SRC := $(NET_SRC) $(FLOW_CONTROL)/src/flow_control_pkg.sv src/eth_flow_pkg.sv
 FLOW_TEST_SRC := $(FLOW_SRC) checker/eth_seg_protocol_checker.sv \
@@ -52,7 +50,6 @@ TIMING_SRC := rtl/eth_seg_if.sv src/eth_seg_types.sv src/eth_seg_pkg.sv \
               test/timing/eth_timing_test_pkg.sv test/timing/tb_timing.sv
 SCENARIO ?= all
 
-# 可选流控依赖外部 package 入口；基础 agent/net_packet 目标仍可独立编译。
 .PHONY: flow-test flow-run
 flow-test:
 	$(MAKE) --no-print-directory flow-run BUILD=build/flow
@@ -67,7 +64,7 @@ flow-run:
 	$(SIMV) +ntb_random_seed=$(SEED) +FLOW_CLOCK_HZ=$(FLOW_CLOCK_HZ) -l $(BUILD)/logs/flow_test.log
 	python3 scripts/check_log.py $(BUILD)/logs/flow_test.log run ETH_FLOW_TEST_COMPLETE
 
-# hub 契约测试无需 net_packet/AIP；源码与原 smoke 独立构建。
+# hub 契约测试不依赖 net_packet/AIP。
 HUB_SRC := rtl/eth_seg_if.sv src/eth_seg_types.sv src/eth_seg_pkg.sv \
            test/sampling/eth_seg_hub_test_pkg.sv test/sampling/tb_hub.sv
 
@@ -83,7 +80,7 @@ hub-run:
 	python3 scripts/check_log.py $(BUILD)/logs/hub.log run ETH_HUB_TEST_COMPLETE
 
 
-# RM/SCB 示例使用网络报文；复位控制只属于测试。
+# RM/SCB 示例需要 net_packet；复位控制接口只属于测试。
 SAMPLING_SRC := $(NET_SRC) checker/eth_seg_protocol_checker.sv \
                 test/sampling/eth_sampling_control.sv examples/sampling/eth_rm_scb_example_pkg.sv \
                 test/sampling/eth_rm_scb_test_pkg.sv test/sampling/tb_rm_scb.sv
@@ -158,7 +155,7 @@ net-packet-aip-run:
 aip-test:
 	$(MAKE) --no-print-directory aip-run BUILD=build/aip
 
-# 指定 aip_core/update 的源码路径；不自动下载或修改用户的 AIP 仓库。
+# AIP_CORE 指向 aip_core 源码；不会自动下载或修改用户的 AIP 仓库。
 aip-run:
 	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core_pkg.sv"
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc

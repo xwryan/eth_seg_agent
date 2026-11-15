@@ -1,6 +1,4 @@
-// test/flow 物理带宽验证：三速率、四格式双向并发，复用独立字节比较 sink。
-// 测试持有 agent/报文/引脚计数器；源报文不经被测转换构造期望。
-// 累计 SOP segment 位置检查取整误差，真实时间检查吞吐，避免用计划统计自证。
+// 流控物理带宽测试：三速率 × 四格式双向并发；用 pin 侧 SOP 位置检查取整误差、真实时间检查吞吐，不用计划统计自证。
 package eth_flow_test_pkg;
   timeunit 1ns;
   timeprecision 1fs;
@@ -13,16 +11,15 @@ package eth_flow_test_pkg;
   import eth_net_packet_test_pkg::*;
   `include "uvm_macros.svh"
 
-  // 预构造随机长度报文使期望可在启动前登记，count 循环沿用产品基础类。
+  // 预构造报文，使期望可在启动前登记。
   class flow_test_seq extends eth_flow_seq;
     packet frames[$];
 
-    // 报文句柄归测试持有，发送期间只读。
     function new(string name = "flow_test_seq");
       super.new(name);
     endfunction
 
-    // 按索引借出输入帧，越界明确失败，不能回退默认帧掩盖 count 错误。
+    // 越界直接失败，不回退默认帧，以免掩盖 count 错误。
     virtual function packet create_packet(int unsigned packet_index);
       if (packet_index >= frames.size()) begin
         `uvm_fatal("FLOW_TEST_INDEX", "packet index outside supplied batch")
@@ -32,7 +29,6 @@ package eth_flow_test_pkg;
     endfunction
   endclass
 
-  // 每条 link 各有 TX/RX agent 和独立轨迹，格式在 build 后保持不变。
   class flow_case #(int RATE = 100) extends uvm_component;
     localparam int SEGMENTS = RATE/25;
     real clock_hz = 415039062.5;
@@ -45,12 +41,11 @@ package eth_flow_test_pkg;
     longint tx_sop[$], rx_sop[$];
     realtime tx_ns[$], rx_ns[$];
 
-    // 名称与 HDL config_db 对齐，计数和模型不会跨 IP 共享。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 测试为同一物理接口创建互补角色，默认关闭旧负载节流。
+    // 同一接口上创建互补角色，并关闭旧负载节流。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       if (!uvm_config_db#(virtual eth_seg_if#(RATE))::get(this, "", "vif", vif))
@@ -67,15 +62,13 @@ package eth_flow_test_pkg;
       tx_sink = new("tx_sink", this); rx_sink = new("rx_sink", this);
     endfunction
 
-    // 观察对端 monitor 的真实整包，而非发送 sequence 或 driver 的通知。
     function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
       mac.tx_monitor.item_collected_port.connect(tx_sink.analysis_export);
       client.rx_monitor.item_collected_port.connect(rx_sink.analysis_export);
     endfunction
 
-    // 同一时间轴上记录 SOP 的有效 segment 索引和实际采样时间。
-    // 逻辑 segment 偏移只用于整拍内的顺序换算，不表示引脚在子周期发生变化。
+    // 记录每个 SOP 的有效 segment 索引与采样时间；拍内 segment 偏移只用于排序，不表示引脚在子周期变化。
     task track(bit tx);
       longint slot = 0;
       bit in_packet = 0, valid;
@@ -107,8 +100,7 @@ package eth_flow_test_pkg;
       end
     endtask
 
-    // 直接建立 raw_data，覆盖短帧补齐、segment 临界长度、大帧和随机长度。
-    // 与限速无关的协议校验不在本测试生成器中实现；网络字节按原样核对。
+    // 直接构造 raw_data，覆盖短帧补齐、segment 临界长度、大帧和随机长度。
     function packet make_frame(int index);
       packet p = new();
       int length;
@@ -127,7 +119,7 @@ package eth_flow_test_pkg;
       return p;
     endfunction
 
-    // 独立字节期望只对短帧补零；保存源长度用于之后确认产品没有修改借入对象。
+    // 期望只对短帧补零；记录源长度以确认产品未修改借入的报文。
     function void expect_frame(packet p, bit tx);
       byte unsigned bytes[$] = p.raw_data;
       while (bytes.size() < 60) bytes.push_back(0);
@@ -146,8 +138,8 @@ package eth_flow_test_pkg;
       `uvm_fatal("FLOW_TEST_DRAIN", "physical traffic did not drain")
     endtask
 
-    // 使用逐帧实际 pin SOP 前缀检查预算：固定速率累计误差只能在 [0,1) 段。
-    // 混合包长不能以平均包长代替；随机速率只检查范围，不错误宣称算术平均带宽。
+    // 用逐帧 pin SOP 前缀检查预算：固定速率的累计误差只能在 [0,1) 段；
+    // 混合包长不能用平均包长代替，随机速率只检查范围。
     function void check_rate(flow_test_seq seq, bit tx, int stage);
       longint slots[$];
       realtime times[$];
@@ -186,8 +178,8 @@ package eth_flow_test_pkg;
       `uvm_info("ETH_FLOW_RATE", $sformatf("RATE=%0d fmt=%0d stage=%0d tx=%0b measured=%0.6f Gbps frames=%0d", RATE, format_mode, stage, tx, actual_rate, seq.count), UVM_LOW)
     endfunction
 
-    // 只捕获指定 fatal，验证速率上限、时钟容量、非法范围、旧负载叠加和非法 count。
-    // 每次都启动新 sequence，确认错误路径不泄漏 sequencer 锁。
+    // 只捕获指定 fatal：速率上限、时钟容量、非法范围、叠加旧负载与非法 count；
+    // 每次新建 sequence，确认错误路径不泄漏 sequencer 锁。
     task negative_cases();
       eth_net_expected_fatal catcher = new();
       for (int n = 0; n < 5; n++) begin
@@ -239,25 +231,22 @@ package eth_flow_test_pkg;
       done = 1;
     endtask
 
-    // 跟踪器覆盖全部阶段，由 UVM 生命周期终止；只有 exercise 完成才声明 done。
     task run_phase(uvm_phase phase);
       fork track(1); track(0); exercise(); join
     endtask
   endclass
 
-  // 十二条 link 覆盖三个 RATE 和所有前导/FCS 组合，顶层持有总 objection。
+  // 十二条 link 覆盖三个 RATE 与全部前导/FCS 组合。
   class eth_flow_test extends uvm_test;
     `uvm_component_utils(eth_flow_test)
     flow_case#(100) c100[4];
     flow_case#(200) c200[4];
     flow_case#(400) c400[4];
 
-    // 仅创建测试身份，组件在 build 中建立。
     function new(string name = "eth_flow_test", uvm_component parent = null);
       super.new(name, parent);
     endfunction
 
-    // 名字匹配 HDL 侧逐 RATE/格式注册的 virtual interface。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       for (int m = 0; m < 4; m++) begin
@@ -267,7 +256,6 @@ package eth_flow_test_pkg;
       end
     endfunction
 
-    // 全部 case 完成且无 UVM error 才有最终完成标记，HDL 层另外提供总超时。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       for (int m = 0; m < 4; m++) wait(c100[m].done && c200[m].done && c400[m].done);

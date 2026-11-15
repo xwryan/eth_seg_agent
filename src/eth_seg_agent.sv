@@ -1,7 +1,5 @@
-// Agent 层：按 CLIENT/MAC 角色组合发送、接收和 ready 驱动，同时始终保留双向 monitor。
-// 配置由 env 或 bind module 预置；active 角色只申请自己拥有的引脚驱动权。
-// agent 拥有 driver/monitor/sequencer，connect 自动发布静态 sqr，final 撤销借用记录。
-// monitor_hub 永久拥有整包订阅缓存；passive 也创建 sequencer，但没有发送能力。
+// segmented agent：按 CLIENT/MAC 角色创建发送、接收和 ready 驱动，双向 monitor 始终存在。
+// connect 时把 sequencer 发布到静态表（Tcl 按名字查找），final 时撤销；passive 也创建仅供采样的 sequencer。
 class eth_seg_agent #(int RATE = 100) extends uvm_agent;
   `uvm_component_param_utils(eth_seg_agent#(RATE))
 
@@ -14,12 +12,10 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
   eth_seg_tx_monitor#(RATE) tx_monitor;
   eth_seg_rx_monitor#(RATE) rx_monitor;
 
-  // 创建 agent；cfg 和子组件均由 build_phase 按角色与 active/passive 状态决定。
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
-  // 从父层取得 cfg，校验 vif/rate 后创建始终存在的监视器以及角色对应 active 驱动器。
   function void build_phase(uvm_phase phase);
     string reason;
     super.build_phase(phase);
@@ -37,7 +33,7 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
     rx_monitor.cfg = cfg;
     monitor_hub = eth_seg_monitor_hub::type_id::create("monitor_hub", this);
     sequencer = eth_seg_sequencer::type_id::create("sequencer", this);
-    // build 就关联句柄，兄弟 RM 在 connect 接入 reset_ap 时不依赖遍历顺序。
+    // 在 build 而非 connect 关联，兄弟 RM 在 connect 接入 reset_ap 时不依赖遍历顺序。
     sequencer.monitor_hub = monitor_hub;
 
     if (cfg.is_active == UVM_ACTIVE) begin
@@ -57,8 +53,6 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
     end
   endfunction
 
-  // CLIENT TX / MAC RX 连接各自 sequencer；ready 独立按配置运行。
-  // 发布到非参数化静态表后，Tcl 可按 agent 名字直接启动，无需顶层 env 转接。
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
     if (cfg != null && cfg.is_active == UVM_ACTIVE) begin
@@ -75,7 +69,6 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
     eth_seg_sequencer::register_sqr(get_full_name(), sequencer);
   endfunction
 
-  // UVM 结束时清除本 agent 的静态索引；组件对象仍由 UVM 管理生命周期。
   function void final_phase(uvm_phase phase);
     super.final_phase(phase);
     if (sequencer != null) eth_seg_sequencer::unregister_sqr(get_full_name(), sequencer);

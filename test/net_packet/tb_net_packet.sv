@@ -1,6 +1,4 @@
-// test/net_packet HDL 层：十二条独立 link 对应三速率和四种帧格式。
-// 依赖 eth_net_packet_test_pkg/interface/checker；本层拥有时钟复位和 interface，
-// UVM case 只借用 vif，pin checker 独立验证 ready 延迟与帧边带。
+// net_packet 测试顶层：十二条 link（三速率 × 四种帧格式）的时钟、复位与 interface，pin checker 独立验证 ready 延迟与帧边带。
 `timescale 1ns/1ps
 module eth_net_test_link #(parameter int RATE = 100, MODE = 0)(input logic clk, rst_n);
   import uvm_pkg::*;
@@ -40,7 +38,7 @@ module tb_net_packet;
     run_test("eth_net_packet_test");
   end
 
-  // 同时保护 sequence 阻塞和 UVM phase 卡住的路径。
+  // 看门狗：覆盖 sequence 阻塞与 UVM phase 卡住。
   initial begin
     #100us;
     $fatal(1, "ETH_NET_GLOBAL_TIMEOUT: network test did not complete");

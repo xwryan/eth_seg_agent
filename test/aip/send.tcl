@@ -1,5 +1,4 @@
-# test/aip Tcl 入口：加载指定 aip_core/update，实际调用静态 sqr 发包。
-# Tcl 拥有命令次序和参数覆盖；SV subscriber 独立核对字节和每个 IP 的数量。
+# AIP Tcl 用例：经静态 sqr 实际发包并改参，SV subscriber 独立核对每个 IP 的字节和数量。
 source [file join $::env(AIP_CORE) dist aip_init.tcl]
 
 # 要求当前命令的独立 ack/status，不能把超时后的旧结果当作新命令成功。

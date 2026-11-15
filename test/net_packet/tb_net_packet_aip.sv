@@ -1,7 +1,5 @@
-// test/net_packet HDL 层：四个 MAC 响应壳提供 ready/RX idle，CLIENT agent 由 bind 自动创建。
-// 依赖 eth_seg_bind_wrapper 与 eth_net_packet_aip_test_pkg；顶层拥有时钟/复位，不创建 env。
-// 100/200/400/100 四个实例证明静态 sqr 按名字区分，非按 RATE 共用一个句柄。
-// 时钟采用累计理想沿时间，415.0390625MHz 与 sequence 的缺省频率一致。
+// net_packet AIP 测试顶层：四个 MAC 响应壳提供 ready/RX idle，CLIENT agent 由 bind 创建；
+// 100/200/400/100 证明静态 sqr 按名字区分；时钟按累计理想沿生成，415.0390625MHz 与 sequence 缺省频率一致。
 `timescale 1ns/1fs
 module eth_net_packet_aip_target #(
   parameter int RATE = 100,
@@ -65,7 +63,7 @@ module tb_net_packet_aip;
     run_test("eth_net_packet_aip_test");
   end
 
-  // bridge、Tcl 或数据通路卡住时必须明确失败，不以进程退出码替代仿真完成标记。
+  // 看门狗：bridge、Tcl 或数据通路卡住时明确失败。
   initial begin
     #50us;
     $fatal(1, "ETH_NET_AIP_GLOBAL_TIMEOUT: Tcl test did not finish");

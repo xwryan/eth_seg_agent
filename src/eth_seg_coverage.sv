@@ -1,6 +1,5 @@
-// src 覆盖层：事务内容与引脚节奏的可审计 coverage collector。
-// write() 订阅一组权威 monitor，复制事务字段到 covergroup 采样变量；独立 TX 时钟线程
-// 统计 ready/valid 连续、间歇转换和 ready 低电平突发长度，公开计数供 test 断言覆盖闭合。
+// coverage collector：write() 采样 monitor 事务字段；TX 时钟线程统计 ready/valid 的连续、转换与 ready 低突发长度，
+// 计数公开供 test 断言覆盖闭合。
 class eth_seg_coverage #(int RATE = 100) extends uvm_component;
   `uvm_component_param_utils(eth_seg_coverage#(RATE))
 
@@ -18,7 +17,6 @@ class eth_seg_coverage #(int RATE = 100) extends uvm_component;
   bit prev_ready, prev_valid;
   int current_ready_low_run;
 
-  // 事务 covergroup 覆盖方向、格式、边界位置、EOP empty、长度和错误组合。
   covergroup transaction_cg;
     cp_rate: coverpoint sample_rate { bins g100={100}; bins g200={200}; bins g400={400}; }
     cp_dir: coverpoint sample_dir { bins tx={0}; bins rx={1}; }
@@ -31,7 +29,6 @@ class eth_seg_coverage #(int RATE = 100) extends uvm_component;
     cross_format_error: cross cp_fcs, cp_error;
   endgroup
 
-  // 节奏 covergroup 记录 ready/valid 电平及连续、转换、低突发长度。
   covergroup timing_cg;
     cp_ready: coverpoint sample_ready { bins low={0}; bins high={1}; }
     cp_valid: coverpoint sample_valid { bins low={0}; bins high={1}; }
@@ -40,21 +37,20 @@ class eth_seg_coverage #(int RATE = 100) extends uvm_component;
     ready_valid: cross cp_ready, cp_valid;
   endgroup
 
-  // 创建 covergroup 并保存组件配置句柄。
   function new(string name = "eth_seg_coverage", uvm_component parent = null);
     super.new(name, parent);
     transaction_cg = new();
     timing_cg = new();
   endfunction
 
-  // 由 env 提供配置和接口；没有 vif 时仍可使用事务 coverage。
+  // 没有 vif 时仍可只做事务 coverage。
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     if (cfg == null) void'(uvm_config_db#(eth_seg_config#(RATE))::get(this, "", "cfg", cfg));
     if (cfg != null) vif = cfg.vif;
   endfunction
 
-  // 复制一条 monitor 事务并采样；元数据错误统一折叠为 error 维度。
+  // 各类元数据错误统一折叠为 error 维度。
   function void write(eth_seg_seq_item item);
     sample_dir = (item.direction == ETH_SEG_RX) ? 1 : 0;
     sample_len = item.frame_bytes.size();
@@ -68,7 +64,7 @@ class eth_seg_coverage #(int RATE = 100) extends uvm_component;
     transactions_seen++;
   endfunction
 
-  // 统计并采样一拍 ready/valid；复位清除历史，避免把复位边界误算成转换。
+  // 复位清除历史，避免把复位边界误算成转换。
   task run_phase(uvm_phase phase);
     forever begin
       if (vif == null) begin #1ns; continue; end

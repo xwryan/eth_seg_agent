@@ -1,8 +1,5 @@
-// src RX 驱动层：将事务编码为 MAC 输出字节流，valid 节奏独立于 TX ready。
-// 负沿更新 RX 私有代理；valid 低时不消费字节，故周期/随机节奏只插入有效气泡，
-// 包内状态跨气泡保存。EOP 在正沿真正采样后通过 sent_ap 发布。
-// 有效拍尾部没有下一包的 segment 必须显式置 idle，避免上拍 inframe 留下伪 SOP。
-// cfg/vif 由 agent 拥有，本 driver 借用；排队/活动事务、编码队列和间隔计数归本组件。
+// RX 驱动：把事务编码为 MAC 输出字节流，valid 节奏独立于 TX ready；负沿更新私有代理，valid 低时不消费字节，
+// 包内状态跨气泡保留；EOP 在正沿真正采样后才通过 sent_ap 发布。
 class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item);
   `uvm_component_param_utils(eth_seg_rx_driver#(RATE))
   localparam int NUM_SEGMENTS = RATE/25;
@@ -15,18 +12,16 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
   int byte_ptr = 0, idle_left = 0, cycle_count = 0; // idle_left 单位是有效 segment。
   bit have_active = 0;
 
-  // 创建分析端口；RX 发送完成与 TX 相同，基于引脚 EOP 采样而非 item_done。
   function new(string name, uvm_component parent);
     super.new(name, parent);
     sent_ap = new("sent_ap", this);
   endfunction
 
-  // RX 无 ready，只有待发、在途和待发布队列为空时才报告 idle。
   function bit is_idle();
     return pending.size() == 0 && !have_active && done_q.size() == 0;
   endfunction
 
-  // 预取并复制报文；复位时丢弃旧副本，保证 RX reset-in-packet 可恢复。
+  // 复位时丢弃预取副本，保证包中途复位后可以恢复。
   task prefetch_thread();
     eth_seg_seq_item req, cp;
     forever begin
@@ -39,9 +34,8 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 依照 rx_valid_pattern 产生有效拍；traffic_load_pct 只在包间 idle segment 节流。
-  // 一个有效周期最多输出 NUM_SEGMENTS 段，EOP 后满足包间隔的剩余段可承载下一包 SOP；
-  // 若没有下一包则清空这些段的边界标记，不能把上一拍的数据段解释成新报文。
+  // valid 按 rx_valid_pattern 产生，traffic_load_pct 只在包间以 idle 段节流；一个有效周期最多 NUM_SEGMENTS 段，
+  // EOP 后满足间隔的剩余段可承载下一包 SOP，没有下一包时必须清除这些段的边界标记。
   task drive_thread();
     bit send_valid;
     forever begin
@@ -63,8 +57,7 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
         end
         ETH_SEG_RANDOM: send_valid = ($urandom_range(0,99) < cfg.rx_valid_high_pct);
       endcase
-      // 包间隔通过 valid 拍中的 idle segment 表示；气泡既不消费字节也不消费间隔。
-      // 无报文且没有剩余间隔才停止 valid，避免末包间隔永久挂起到下一次发包。
+      // 无报文且无剩余间隔时才停 valid，否则末包间隔会一直挂到下一次发包。
       if (!have_active && pending.size() == 0 && idle_left == 0) send_valid = 0;
       cfg.vif.drv_rx_valid <= send_valid;
       if (!send_valid) continue;
@@ -98,8 +91,7 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
             active = null; have_active = 0; encoded.delete(); byte_ptr = 0;
           end
         end else begin
-          // o_rx_mac_valid 对整拍生效，尾部空段同样会被接收方检查 inframe。
-          // 保留旧 inframe=1 会产生未结束的幽灵包，尤其易出现在宽总线的短尾拍。
+          // valid 对整拍生效：尾部空段若保留旧 inframe=1，接收方会看到未结束的幽灵包。
           cfg.vif.drv_rx_data[s*64 +: 64] <= '0;
           cfg.vif.drv_rx_inframe[s] <= 1'b0;
           cfg.vif.drv_rx_eop_empty[s*3 +: 3] <= '0;
@@ -112,7 +104,6 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 正沿确认 EOP 后按队列顺序发布 sent_ap；无效拍完全忽略 RX 边带。
   task completion_thread();
     forever begin
       @(posedge cfg.vif.i_clk_rx);
@@ -125,7 +116,6 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     end
   endtask
 
-  // 校验配置并领取 RX 所有权；停止时 final_phase 归还网络驱动权。
   task run_phase(uvm_phase phase);
     string reason; if (cfg == null || !cfg.validate(reason)) `uvm_fatal("ETH_RX_CFG", reason)
     cfg.vif.claim_rx(get_full_name());
@@ -133,7 +123,6 @@ class eth_seg_rx_driver #(int RATE = 100) extends uvm_driver #(eth_seg_seq_item)
     forever @(posedge cfg.vif.i_clk_rx);
   endtask
 
-  // 释放 RX 代理，避免下一次测试沿用本组件的占用标记。
   function void final_phase(uvm_phase phase);
     if (cfg != null && cfg.vif != null) cfg.vif.release_rx();
   endfunction

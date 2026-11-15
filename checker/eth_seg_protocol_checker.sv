@@ -1,8 +1,5 @@
-// checker 独立 pin-level 协议检查器：不依赖 UVM、virtual interface 或 bind。
-// 所有 TX/RX 引脚显式列出，便于负向 testbench 单独实例化。RATE 在 elaboration 决定总线宽度。
-// 每条诊断使用稳定 ETH_SEG_* 编号；复位清除历史，RX invalid 拍完全忽略字段。
-// checker 只拥有解析历史；字段有效范围由 valid、包边界及 EOP empty 共同决定，
-// idle 段、EOP 未用字节和 RX non-EOP 状态允许 X，不能对整个总线统一查未知值。
+// 独立 pin-level 协议检查器（不依赖 UVM/vif/bind），引脚显式列出便于负向测试单独实例化；诊断使用稳定的 ETH_SEG_* 编号。
+// 字段有效范围由 valid、包边界和 EOP empty 决定：idle 段、EOP 未用字节及 RX non-EOP 状态允许 X，不能对整条总线查未知值。
 module eth_seg_protocol_checker #(parameter int RATE = 100) (
   input logic i_clk_tx, input logic i_clk_rx,
   input logic i_tx_rst_n, input logic i_rx_rst_n,
@@ -32,7 +29,7 @@ module eth_seg_protocol_checker #(parameter int RATE = 100) (
   bit tx_packet_skip;
   bit rx_packet;
 
-  // checker 与接口共享编译期速率约束，非法宽度在 elaboration 即给出稳定诊断。
+  // 与 interface 相同的速率约束，非法宽度在 elaboration 即报错。
   initial begin
     if (!(RATE inside {100, 200, 400}))
       $error("ETH_SEG_RATE_INVALID: RATE must be 100, 200 or 400");
@@ -98,7 +95,6 @@ module eth_seg_protocol_checker #(parameter int RATE = 100) (
     end
   end
 
-  // RX 正沿只验证 valid 区间；invalid 时不读任何字段、不生成伪造边界。
   always @(posedge i_clk_rx) begin
     if (!i_rx_rst_n) begin
       rx_packet <= 0;

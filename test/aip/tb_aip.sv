@@ -1,6 +1,5 @@
-// test/aip HDL 层：四个 MAC 响应壳提供 ready/RX idle，CLIENT agent 由 bind 自动创建。
-// 依赖 eth_seg_bind_wrapper 与 eth_seg_aip_test_pkg；顶层拥有时钟/复位，不创建 env。
-// 100/200/400/100 四个实例证明静态 sqr 按名字区分，非按 RATE 共用一个句柄。
+// AIP 测试顶层：四个 MAC 响应壳提供 ready/RX idle，CLIENT agent 由 bind 自动创建；
+// 100/200/400/100 四个实例证明静态 sqr 按名字而非 RATE 区分。
 `timescale 1ns/1ps
 module eth_seg_aip_target #(
   parameter int RATE = 100,
@@ -58,7 +57,7 @@ module tb_aip;
     run_test("eth_seg_aip_test");
   end
 
-  // bridge、Tcl 或数据通路卡住时必须明确失败，不以进程退出码替代仿真完成标记。
+  // 看门狗：bridge、Tcl 或数据通路卡住时明确失败。
   initial begin
     #50us;
     $fatal(1, "ETH_AIP_GLOBAL_TIMEOUT: Tcl test did not finish");

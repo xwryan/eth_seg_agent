@@ -1,6 +1,5 @@
-// test/net_packet 验证层：三种 RATE × 四种前导/FCS 格式，双向比较物理 monitor 字节。
-// 依赖 net_packet_pkg、eth_net_packet_pkg；test 拥有 case、agent、期望队列和刺激报文。
-// 期望直接来自输入 raw_data，不能用被测 packet_to_item 生成，以发现漏字节/换序/重打包。
+// net_packet 集成测试：三种 RATE × 四种前导/FCS 格式双向比较 monitor 字节；
+// 期望直接取自输入 raw_data，不用被测 packet_to_item 生成，以发现漏字节/换序/重打包。
 package eth_net_packet_test_pkg;
   import uvm_pkg::*;
   import net_packet_pkg::*;
@@ -9,16 +8,14 @@ package eth_net_packet_test_pkg;
   import eth_net_packet_pkg::*;
   `include "uvm_macros.svh"
 
-  // 批量业务示例只遍历报文，所有转换和握手都复用公共 send_packet。
+  // 批量发送示例：转换与握手全部复用公共 send_packet。
   class eth_net_batch_seq extends eth_base_seq;
     packet packets[$];
 
-    // 队列借用 case 持有的报文，发送期间 case 不修改它们。
     function new(string name = "eth_net_batch_seq");
       super.new(name);
     endfunction
 
-    // 顺序入队；物理完成由 case 的两个 monitor 接收器判定。
     virtual task body();
       foreach (packets[i]) send_packet(packets[i]);
     endtask
@@ -26,7 +23,7 @@ package eth_net_packet_test_pkg;
 
   // 逐包生成的业务子类：继承唯一 count/body，只覆写协议字段并 repack。
   class eth_net_index_seq extends eth_base_seq;
-    // 创建身份，不额外声明 count，防止 Tcl 设置到父类而循环读取子类变量。
+    // 不在子类重新声明 count，否则 Tcl 会设置父类字段而循环读取子类变量。
     function new(string name = "indexed");
       super.new(name);
     endfunction
@@ -43,29 +40,24 @@ package eth_net_packet_test_pkg;
 
   // 明确返回空报文的测试生成器，验证默认 body 在错误路径不会发包或通知成功。
   class eth_net_null_seq extends eth_base_seq;
-    // 只保存 UVM 身份。
     function new(string name = "null_generator");
       super.new(name);
     endfunction
 
-    // 受控失败，用于精确匹配 ETH_NET_NULL。
     virtual function packet create_packet(int unsigned packet_index);
       return null;
     endfunction
   endclass
 
-  // 单个接收器独立持有期望快照，可同时检查字节、EOP、FCS 和无错误边带。
   class eth_net_sink extends uvm_subscriber#(eth_seg_seq_item);
     eth_seg_seq_item expected[$];
     int received = 0;
 
-    // 接收器归 case/test 所有；analysis_export 由 uvm_subscriber 创建。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 直接复制源字节并按 cfg 构造尾 CRC；不调用被测转换函数。
-    // 此测试验证传输边界，不把共用 CRC 算法的结果当作独立算法认证。
+    // 复制源字节并按 cfg 补尾 CRC，不调用被测转换函数（与被测共用 CRC 算法，不作为其独立验证）。
     function void expect_bytes(input byte unsigned bytes[$], input bit preamble,
                                input bit fcs, input eth_seg_dir_e direction);
       eth_seg_seq_item exp = new("expected");
@@ -86,7 +78,6 @@ package eth_net_packet_test_pkg;
       expected.push_back(exp);
     endfunction
 
-    // 只比较真实引脚重建的事务；多包、少字节、ICRC 被剥离等都产生明确错误。
     function void write(eth_seg_seq_item t);
       eth_seg_seq_item exp;
 
@@ -112,17 +103,15 @@ package eth_net_packet_test_pkg;
     endfunction
   endclass
 
-  // 负向接口测试只捕获当前明确指定的 fatal，禁止全局屏蔽其它异常。
+  // 只捕获当前指定的 fatal，不全局屏蔽其它异常。
   class eth_net_expected_fatal extends uvm_report_catcher;
     string expected_id;
     int caught = 0;
 
-    // catcher 仅在单个边界调用期间注册，调用结束立即撤销。
     function new();
       super.new("expected_fatal");
     endfunction
 
-    // 精确匹配严重级别和 ID；捕获时累计次数供测试核对。
     virtual function action_e catch();
       if (get_severity() == UVM_FATAL && get_id() == expected_id) begin
         caught++;
@@ -132,7 +121,7 @@ package eth_net_packet_test_pkg;
     endfunction
   endclass
 
-  // 一条 link 的格式在 build 后固定；十二条独立 link 避免运行中改格式引入歧义。
+  // 每条 link 的格式在 build 后固定，用十二条 link 而非运行中改格式。
   class eth_net_rate_case #(int RATE = 100) extends uvm_component;
     int format_mode;
     bit done = 0;
@@ -141,12 +130,11 @@ package eth_net_packet_test_pkg;
     eth_net_sink tx_sink, rx_sink, sampled_tx, sampled_rx;
     eth_base_seq tx_sampler, rx_sampler;
 
-    // case 名字与 HDL 侧 vif 的路径一一对应。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // 创建双 active agent；共享同一 link，但分别占有 TX 和 RX/ready 驱动权。
+    // 两个 active agent 共享同一 link，分别占有 TX 与 RX/ready 驱动权。
     function void build_phase(uvm_phase phase);
       virtual eth_seg_if#(RATE) vif;
 
@@ -183,15 +171,14 @@ package eth_net_packet_test_pkg;
       rx_sampler = new("rx_sampler");
     endfunction
 
-    // 订阅对端 monitor，确保比较的是公共引脚采样而非 driver 的完成通知。
     function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
       mac.tx_monitor.item_collected_port.connect(tx_sink.analysis_export);
       client.rx_monitor.item_collected_port.connect(rx_sink.analysis_export);
     endfunction
 
-    // 构造常见网络帧、VLAN、隧道、RoCEv2 和最小 Ethernet 头；salt 区分方向/端口。
-    // 自动打包例使用确定性 payload，以便另建期望；随机 payload 例仅打包一次后取快照。
+    // 常见网络帧、VLAN、隧道、RoCEv2 与最小 Ethernet 头，salt 区分方向/端口；
+    // 自动打包例用确定性 payload 以便独立建期望，随机 payload 例只打包一次后取快照。
     function packet make_packet(input int index, input int salt, input bit pack_now = 1);
       packet p = new();
       eth_header eh;
@@ -268,7 +255,6 @@ package eth_net_packet_test_pkg;
       return 17 + ((RATE == 400 && format_mode == 0) ? 32 : 0);
     endfunction
 
-    // 一份独立期望同时交给 analysis 与 seq 消费者，两个 sink 各自复制。
     function void expect_generated(packet p, bit is_rx);
       eth_net_sink sink = is_rx ? rx_sink : tx_sink;
       eth_net_sink sampled = is_rx ? sampled_rx : sampled_tx;
@@ -333,7 +319,6 @@ package eth_net_packet_test_pkg;
       end
     endtask
 
-    // 排空必须同时满足整包数量、四个独立期望队列与真实驱动/监视器空闲。
     function bit complete();
       return tx_sink.received == frame_total() && rx_sink.received == frame_total() &&
              sampled_tx.received == frame_total() && sampled_rx.received == frame_total() &&
@@ -343,7 +328,7 @@ package eth_net_packet_test_pkg;
              mac.tx_monitor.is_idle() && client.rx_monitor.is_idle();
     endfunction
 
-    // 流量启动前注册，四个线程并行覆盖 analysis 和公共 seq 获取同一批完整报文。
+    // 流量启动前订阅；四个线程并行，analysis 与公共 seq 各自获取同一批完整报文。
     task run_phase(uvm_phase phase);
       wait (client_cfg.vif.i_tx_rst_n && client_cfg.vif.i_rx_rst_n);
       tx_sampler.set_sequencer(client.sequencer);
@@ -372,7 +357,6 @@ package eth_net_packet_test_pkg;
     endtask
   endclass
 
-  // 总测试持有唯一 objection，同时验证转换的对象隔离和错误入口。
   class eth_net_packet_test extends uvm_test;
     `uvm_component_utils(eth_net_packet_test)
     eth_net_rate_case#(100) case100[4];
@@ -381,12 +365,10 @@ package eth_net_packet_test_pkg;
     eth_seg_sequencer sample_only;
     uvm_sequencer#(eth_seg_seq_item) wrong_type;
 
-    // test 由 run_test 创建；子 case 在 build 中创建。
     function new(string name = "eth_net_packet_test", uvm_component parent = null);
       super.new(name, parent);
     endfunction
 
-    // 每种速率覆盖无格式、仅 FCS、仅前导、前导加 FCS 四种静态配置。
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       sample_only = new("sample_only", this);
@@ -401,8 +383,8 @@ package eth_net_packet_test_pkg;
       end
     endfunction
 
-    // 检查重复转换不重打包、不改错误注入字节，且源、两个结果之间完全独立。
-    // 对 null/空栈/短帧/坏栈/未启动发送逐个匹配预期 fatal，任何额外诊断仍正常失败。
+    // 重复转换不重打包、不改错误注入字节，源与两个结果相互独立；
+    // null/空栈/短帧/坏栈/未启动发送逐个匹配预期 fatal，额外诊断仍会失败。
     task check_conversion_contract();
       eth_base_seq seq = new("conversion");
       packet p = new();
@@ -458,7 +440,7 @@ package eth_net_packet_test_pkg;
       `uvm_info("ETH_NET_CONVERSION_PASS", "byte snapshots, deep copies and six negative boundaries passed", UVM_NONE)
     endtask
 
-    // 新 API 的失败路径不应进入 UVM item 仲裁；测试专用 sqr 没有 driver，卡住会超时。
+    // 失败路径不应进入 item 仲裁；测试专用 sqr 没有 driver，误入会卡住超时。
     task check_sequence_contract();
       eth_base_seq seq = new("invalid_sequence");
       eth_net_null_seq null_seq = new("null_sequence");
@@ -487,7 +469,6 @@ package eth_net_packet_test_pkg;
       `uvm_info("ETH_NET_SEQUENCE_PASS", "seven count/type/passive/generator boundaries passed", UVM_NONE)
     endtask
 
-    // 同时等待十二个 link，计数/格式错误仍由 UVM summary 决定最终成败。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       check_conversion_contract();

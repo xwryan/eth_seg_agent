@@ -1,5 +1,4 @@
-# test/net_packet Tcl 网络发包测试：参数按 bind AGENT_NAME 隔离，SV 独立比较线上报文。
-# 依赖 aip_core/update 的命名参数语法；Tcl 错误必须让调用进程失败，不能静默继续。
+# net_packet AIP Tcl 用例：参数按 AGENT_NAME 隔离，SV 独立比较线上报文；任何 Tcl 错误都必须让仿真失败。
 source [file join $::env(AIP_CORE) dist aip_init.tcl]
 
 # 每个命令核对独立 ack 和 status，避免超时旧结果被当作本次成功。

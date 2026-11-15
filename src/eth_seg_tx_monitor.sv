@@ -1,9 +1,5 @@
-// src 观察层：TX segmented client 引脚监视器。
-// 本组件只读 eth_seg_if 的公共 TX 网络，逐个有效 segment 重建字节队列；
-// 它拥有当前包的临时状态和发布事务，不驱动 interface，也不与 driver 共享可变对象。
-// reset_state_port 只发布本方向采样到的复位变化，hub/test 决定缓存和预测清理策略。
-// skip_crc 由引脚逐段采样并作为当前包的 FCS 格式依据；CRC 错误属于合法报文，
-// 仅记录 fcs_ok=0，格式损坏才报告 UVM_ERROR。复位期间未结束的包被标记 aborted 丢弃。
+// TX 引脚 monitor：只读公共 TX 网络，逐个有效 segment 重建字节队列；skip_crc 按段采样，作为当前包的 FCS 格式依据。
+// CRC 错误是合法报文，只记 fcs_ok=0，格式损坏才报 UVM_ERROR；复位期间未结束的包标记 aborted 丢弃。
 class eth_seg_tx_monitor #(int RATE = 100) extends uvm_component;
   `uvm_component_param_utils(eth_seg_tx_monitor#(RATE))
 
@@ -21,14 +17,12 @@ class eth_seg_tx_monitor #(int RATE = 100) extends uvm_component;
   eth_seg_byte_queue_t packet_bytes;
   eth_seg_seq_item packet_item;
 
-  // 创建端口和计数器；配置由 agent 在 build 后预设，run 时只读。
   function new(string name = "eth_seg_tx_monitor", uvm_component parent = null);
     super.new(name, parent);
     item_collected_port = new("item_collected_port", this);
     reset_state_port = new("reset_state_port", this);
   endfunction
 
-  // 连接配置并检查虚接口；agent 也可直接写入 cfg/vif 后调用该组件。
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     if (cfg == null) void'(uvm_config_db#(eth_seg_config#(RATE))::get(this, "", "cfg", cfg));
@@ -36,20 +30,17 @@ class eth_seg_tx_monitor #(int RATE = 100) extends uvm_component;
     if (vif == null) `uvm_fatal("ETH_SEG_TX_MON_CFG", "TX monitor virtual interface is null")
   endfunction
 
-  // 判断监视器是否没有待完成报文；复位中断包也必须已经清空才算 idle。
   function bit is_idle();
     return !in_packet && packet_bytes.size() == 0;
   endfunction
 
-  // 将一个 64-bit segment 的低端字节按 Ethernet 发送顺序追加到当前包。
-  // nbytes 由 inframe/eop_empty 决定，EOP 至少保留一个字节；非法 empty 由调用方诊断。
+  // segment 低字节先发；nbytes 由 inframe/eop_empty 决定，非法 empty 由调用方诊断。
   function void append_segment(input int seg, input int nbytes);
     for (int b = 0; b < nbytes; b++)
       packet_bytes.push_back(vif.tx_cb.i_tx_mac_data[seg*64 + b*8 +: 8]);
     bytes_seen += nbytes;
   endfunction
 
-  // 在 EOP 处完成 codec 解码、填充边带并发布深拷贝事务；CRC 不匹配不视为格式错误。
   task automatic finish_packet(input int seg, input int empty, input bit error_bit);
     string reason;
     bit ok;
@@ -71,13 +62,12 @@ class eth_seg_tx_monitor #(int RATE = 100) extends uvm_component;
     in_packet = 0;
   endtask
 
-  // 在 TX 正沿采样；无效拍保持解析状态，按 segment 顺序支持同拍 EOP 后接 SOP。
+  // 无效拍保持解析状态；按 segment 顺序处理，支持同拍 EOP 后接 SOP。
   task run_phase(uvm_phase phase);
     bit ended_this_cycle;
     forever begin
       @(vif.tx_cb);
-      // 同一采样域首次同步及复位边沿通知；先清理 hub，再消费本拍数据。
-      // X 复位由接口检查负责，此处只将确定的低电平视为断言。
+      // 首次同步及复位边沿时通知（先清 hub，再消费本拍数据）；X 复位由接口检查，这里只把确定的低电平视为断言。
       if (!reset_observed || previous_reset != (vif.tx_cb.i_tx_rst_n === 1'b0)) begin
         reset_observed = 1;
         previous_reset = (vif.tx_cb.i_tx_rst_n === 1'b0);

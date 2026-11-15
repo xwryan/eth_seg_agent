@@ -1,5 +1,5 @@
-// test/timing checker 独立探针：区分 invalid、idle、non-EOP 和 EOP 的字段有效范围。
-// 本模块直接拥有全部引脚刺激，无 UVM；故意非法用例由外部日志检查匹配指定诊断。
+// checker 定向探针（无 UVM）：区分 invalid/idle/non-EOP/EOP 的字段有效范围；
+// 故意非法的用例由 check_timing_checker.py 匹配指定诊断。
 `timescale 1ns/1ps
 module tb_timing_checker;
   logic clk = 0, rst_n = 0;

@@ -1,23 +1,20 @@
-// test/sampling 契约测试：直接注入独立整包，隔离 hub 的队列/取消/复位与 SCB 接口。
-// 测试拥有输入和期望；被测组件必须复制对象。负向检查仅捕获精确 ID 和严重级别。
+// hub/SCB 契约测试：直接注入独立整包，验证队列、取消、复位与 SCB 接口；负向检查只捕获精确 ID 和严重级别。
 package eth_seg_hub_test_pkg;
   import uvm_pkg::*;
   import eth_seg_types_pkg::*;
   import eth_seg_pkg::*;
   `include "uvm_macros.svh"
 
-  // 一次只允许一个指定诊断；意外错误继续交给 UVM，不掩盖死锁或数组访问问题。
+  // 一次只捕获一个指定诊断；意外错误照常交给 UVM，不掩盖死锁或越界访问。
   class sample_expected_report extends uvm_report_catcher;
     string id;
     uvm_severity severity;
     int caught;
 
-    // 身份由测试拥有，每次 arm/disarm 重置统计。
     function new();
       super.new("sample_expected_report");
     endfunction
 
-    // 精确捕获当前负向用例，不修改其它报告的严重级别。
     virtual function action_e catch();
       if (get_id() == id && get_severity() == severity) begin
         caught++;
@@ -31,12 +28,10 @@ package eth_seg_hub_test_pkg;
   class sample_reset_sink extends uvm_subscriber#(eth_seg_reset_notice_t);
     eth_seg_reset_notice_t notices[$];
 
-    // 测试持有接收器，不保存 hub 内部对象引用。
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    // struct 按值入队，后续状态变化不会修改已收到的记录。
     function void write(eth_seg_reset_notice_t t);
       notices.push_back(t);
     endfunction
@@ -52,7 +47,6 @@ package eth_seg_hub_test_pkg;
     eth_seg_sequencer registry_a, registry_b;
     int checks, negative_cases;
 
-    // 组件资源在 build 创建，所有等待均受 HDL 总超时保护。
     function new(string name = "eth_seg_hub_test", uvm_component parent = null);
       super.new(name, parent);
     endfunction
@@ -69,13 +63,11 @@ package eth_seg_hub_test_pkg;
       registry_b = new("registry_b", this);
     endfunction
 
-    // 在端口解析前接收 hub 复位通知，不依赖其内部状态字段。
     function void connect_phase(uvm_phase phase);
       super.connect_phase(phase);
       hub.reset_ap.connect(reset_sink.analysis_export);
     endfunction
 
-    // 所有断言由独立输入决定；失败立即终止，避免后续访空掩盖根因。
     function void ensure(bit condition, string message);
       checks++;
       if (!condition) `uvm_fatal("ETH_HUB_TEST", message)
@@ -95,7 +87,6 @@ package eth_seg_hub_test_pkg;
       return item;
     endfunction
 
-    // 只在预期失败调用附近安装 catcher，调用结束须核对命中次数。
     function void arm(string id, uvm_severity severity = UVM_FATAL);
       catcher.id = id;
       catcher.severity = severity;
@@ -294,7 +285,6 @@ package eth_seg_hub_test_pkg;
       ensure(eth_seg_sequencer::get_sqr("hub_registry") == null, "owner did not unregister");
     endtask
 
-    // 完成标记只在全部并发线程结束、队列清空且所有负向计数准确后发布。
     task run_phase(uvm_phase phase);
       phase.raise_objection(this);
       copies();

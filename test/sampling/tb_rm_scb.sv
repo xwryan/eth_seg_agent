@@ -1,5 +1,4 @@
-// test/sampling HDL 层：三条独立链路；测试控制复位，checker 检查实际引脚时序。
-// 本层拥有 interface/control，UVM 只借用；出口由测试刺激源模拟，不包含用户 DUT。
+// 采样测试顶层：三条独立链路，测试控制复位，checker 检查实际引脚时序；不含用户 DUT。
 `timescale 1ns/1ps
 module eth_sampling_link #(parameter int RATE = 100)(input logic clk);
   import uvm_pkg::*;

@@ -1,5 +1,4 @@
-// test/timing HDL 夹具：拥有异步 TX/RX 时钟、复位控制接口及真实寄存 ready 源。
-// 依赖 eth_timing_test_pkg、产品 interface/checker；六个 link 互不共享可变状态。
+// 时序测试顶层：异步 TX/RX 时钟、复位控制接口与真实寄存的 ready 源，六条 link 互不共享状态。
 `timescale 1ns/1ps
 module timing_link #(parameter int RATE = 100, READY_POSEDGE = 0)(input logic tx_clk,rx_clk);
   import uvm_pkg::*;

@@ -1,26 +1,22 @@
-// src 整包采样层：agent 拥有本组件，双向 Monitor 在 EOP 发布的整包是唯一数据源。
-// 每个 (direction, portid) 拥有独立副本队列；sequence 只借用 hub，命令结束不销毁缓存。
-// 不驱动引脚，不解析 segment；复位按方向清空队列，订阅和等待者继续存活。
+// 整包采样 hub：双向 monitor 在 EOP 发布的整包是唯一数据源，每个 (direction, portid) 订阅持有独立副本队列。
+// 不驱动引脚、不解析 segment；复位按方向清空队列，订阅和等待者保留。
 `uvm_analysis_imp_decl(_sample_tx)
 `uvm_analysis_imp_decl(_sample_rx)
 `uvm_analysis_imp_decl(_sample_reset_tx)
 `uvm_analysis_imp_decl(_sample_reset_rx)
 
-// 槽对象单独存在，使取消后的旧等待者仍引用旧槽，不会误取同编号新订阅的数据。
-// hub 拥有有效槽；取消后最后一个等待者退出即可释放对象。
+// 槽独立成对象：取消后旧等待者仍引用旧槽，不会误取同编号新订阅的数据。
 class eth_seg_subscription;
   eth_seg_seq_item frames[$];
   int unsigned depth;
   bit active = 1;
   process reader;
 
-  // 深度由 hub 校验；构造不创建读取线程，不分配尚未收到的包。
   function new(int unsigned depth);
     this.depth = depth;
   endfunction
 endclass
 
-// 非参数化广播组件，速率只影响 Monitor 何时发布，采样层按整包维护 FIFO。
 class eth_seg_monitor_hub extends uvm_component;
   `uvm_component_utils(eth_seg_monitor_hub)
 
@@ -34,7 +30,6 @@ class eth_seg_monitor_hub extends uvm_component;
   protected bit reset_known[2], in_reset[2];
   protected int unsigned reset_epoch[2];
 
-  // 创建 TLM 端口；未订阅时不分配报文缓存，复位消息按值传递。
   function new(string name = "monitor_hub", uvm_component parent = null);
     super.new(name, parent);
     sample_tx = new("sample_tx", this);
@@ -44,7 +39,7 @@ class eth_seg_monitor_hub extends uvm_component;
     reset_ap = new("reset_ap", this);
   endfunction
 
-  // 防止非法枚举索引固定方向数组；fatal 被测试捕获时仍返回失败。
+  // 非法方向会越界索引固定数组；fatal 被 catcher 吞掉时仍返回 0。
   protected function bit valid_dir(eth_seg_dir_e dir);
     if (!(dir inside {ETH_SEG_TX, ETH_SEG_RX})) begin
       `uvm_fatal("ETH_SAMPLE_CFG", "sampling direction must be TX or RX")
@@ -53,7 +48,7 @@ class eth_seg_monitor_hub extends uvm_component;
     return 1;
   endfunction
 
-  // 取已注册槽，缺失时报配置错误；不隐式订阅，不创建历史回放。
+  // 未订阅时报错，不隐式订阅。
   protected function eth_seg_subscription get_slot(eth_seg_dir_e dir, int unsigned portid);
     if (!valid_dir(dir)) return null;
     if (!slots[dir].exists(portid)) begin
@@ -63,7 +58,6 @@ class eth_seg_monitor_hub extends uvm_component;
     return slots[dir][portid];
   endfunction
 
-  // 注册独立消费者；重复注册和零容量报错，不改变原订阅及缓存。
   function void subscribe(eth_seg_dir_e dir, int unsigned portid = 0, int unsigned depth = 1024);
     if (!valid_dir(dir)) return;
     if (depth == 0 || slots[dir].exists(portid)) begin
@@ -73,7 +67,7 @@ class eth_seg_monitor_hub extends uvm_component;
     slots[dir][portid] = new(depth);
   endfunction
 
-  // 取消会清空队列并唤醒旧等待者；重复取消无副作用，重订阅创建新对象。
+  // 清空队列并唤醒旧等待者；重复取消无副作用，重订阅会创建新槽。
   function void unsubscribe(eth_seg_dir_e dir, int unsigned portid = 0);
     eth_seg_subscription slot;
     if (!valid_dir(dir)) return;
@@ -84,21 +78,19 @@ class eth_seg_monitor_hub extends uvm_component;
     slots[dir].delete(portid);
   endfunction
 
-  // 返回已缓存整包数；半包不进入 hub，非法订阅由 get_slot 明确诊断。
   function int unsigned pending(eth_seg_dir_e dir, int unsigned portid = 0);
     eth_seg_subscription slot = get_slot(dir, portid);
     return slot == null ? 0 : slot.frames.size();
   endfunction
 
-  // 仅表明所有缓存为空；测试结束还需核对数量、driver/Monitor 及 RM 在途状态。
+  // 只表示缓存为空；结束测试还需核对数量及 driver/monitor/RM 在途状态。
   function bit is_idle();
     foreach (slots[d,p]) if (slots[d][p].frames.size() != 0) return 0;
     return 1;
   endfunction
 
-  // 获取一个完整帧。已有包立即返回；无包阻塞至入包、取消或非零 timeout 到期。
-  // 复位清空队列但不重启 timeout。取消返回 null；超时返回 null 并报告 ERROR。
-  // 读者进程死亡后允许新读者接管；同槽两个活跃读取者会报错，避免竞争消费。
+  // 有包立即返回，否则阻塞到入包、取消或非零 timeout 到期（复位不重启计时）；取消/超时返回 null，超时报 ERROR。
+  // 同一槽同时只允许一个活跃读者；读者进程被 kill 后可由新读者接管。
   task mon_xaction(output eth_seg_seq_item tr, input eth_seg_dir_e dir,
                    input int unsigned portid = 0, input time timeout = 0);
     eth_seg_subscription slot;
@@ -147,8 +139,7 @@ class eth_seg_monitor_hub extends uvm_component;
     end
   endtask
 
-  // 广播给已有订阅。先整体检查容量再复制，fatal 被捕获时也不产生部分广播。
-  // 错误帧/aborted 保留元数据；没有订阅者时不保存任何历史对象。
+  // 先检查所有订阅的容量再复制，fatal 被捕获时也不会部分广播；没有订阅者时不保留历史。
   protected function void publish(eth_seg_dir_e dir, eth_seg_seq_item item);
     if (item == null) begin
       `uvm_fatal("ETH_SAMPLE_NULL", "monitor published a null frame")
@@ -168,18 +159,15 @@ class eth_seg_monitor_hub extends uvm_component;
     end
   endfunction
 
-  // 接收 TX Monitor 的完整 EOP 事务，不读取 driver 的预取或完成队列。
   function void write_sample_tx(eth_seg_seq_item item);
     publish(ETH_SEG_TX, item);
   endfunction
 
-  // 接收 RX Monitor 的完整 EOP 事务，保留所有错误边带。
   function void write_sample_rx(eth_seg_seq_item item);
     publish(ETH_SEG_RX, item);
   endfunction
 
-  // 复位状态首次同步，后续只发布变化；先清理本方向缓存，再同步通知用户环境。
-  // 通知按值传递 epoch；hub 不替用户清理已取出的包或预测线程。
+  // 首次同步复位状态，之后只发布变化：先清本方向缓存再通知用户；已取出的包和预测线程由用户自行清理。
   protected function void observe_reset(eth_seg_dir_e dir, bit asserted);
     eth_seg_reset_notice_t notice;
     if (reset_known[dir] && in_reset[dir] == asserted) return;
@@ -195,12 +183,11 @@ class eth_seg_monitor_hub extends uvm_component;
     reset_ap.write(notice);
   endfunction
 
-  // TX 复位来自 TX Monitor 的同一采样域，1 表示断言。
   function void write_sample_reset_tx(bit asserted);
     observe_reset(ETH_SEG_TX, asserted);
   endfunction
 
-  // RX 复位只影响 RX 订阅；整链路清理策略由 RM/test 订阅 reset_ap 后决定。
+  // 只影响 RX 订阅；整链路清理策略由订阅 reset_ap 的 RM/test 决定。
   function void write_sample_reset_rx(bit asserted);
     observe_reset(ETH_SEG_RX, asserted);
   endfunction

@@ -1,8 +1,7 @@
-// src 字节编解码层：统一前导与 Ethernet CRC32，刻意不共享 segment 边界状态机。
-// 所有方法为静态且无持久状态；输入事务由调用者拥有，encode 输出新队列，decode 更新调用者对象。
-// include_fcs 时数组保留尾部四字节，错误 CRC 是合法错误帧而不是格式解析失败。
+// 无状态的前导与 Ethernet CRC32 编解码，刻意不包含 segment 边界状态机。
+// include_fcs 时数组保留尾部 4 字节；CRC 错误是合法的错误帧，不是格式解析失败。
 class eth_seg_codec;
-  // 按 Ethernet 反射多项式计算 CRC；输入为空时返回零，前导字节由调用者排除。
+  // Ethernet CRC32（反射多项式）；调用者需先去掉前导，空输入返回 0。
   static function bit [31:0] crc32(input byte unsigned data[]);
     bit [31:0] crc;
     crc = 32'hffffffff;
@@ -14,8 +13,7 @@ class eth_seg_codec;
     return ~crc;
   endfunction
 
-  // 构建物理字节串：显式 FCS 保留原样，缺省 FCS 自动计算，错误注入只翻转尾 CRC 一位。
-  // 配置关闭 FCS 时不猜测/剥离用户数组；不支持的 fcs_present 组合由 driver 拒绝。
+  // 显式 FCS 原样保留，缺省 FCS 自动计算，错误注入只翻转尾部 CRC 的一位；关闭 FCS 时不猜测或剥离用户数组。
   static function void encode(input eth_seg_seq_item item, input bit preamble,
                               input bit include_fcs, output eth_seg_byte_queue_t bytes);
     bit [31:0] crc;
@@ -33,8 +31,8 @@ class eth_seg_codec;
       bytes[bytes.size()-1] ^= 8'h01;
   endfunction
 
-  // 验证并移除前导；FCS 字节继续保留到输出数组中，单独填校验状态及低字节优先的数值。
-  // 返回零仅表示格式不足或前导错误；CRC 不匹配返回一，使负向错误帧可进入 scoreboard。
+  // 校验并移除前导，FCS 字节保留在输出中；返回 0 只表示长度不足或前导错误，
+  // CRC 不匹配仍返回 1，使负向错误帧能进入 scoreboard。
   static function bit decode(input eth_seg_byte_queue_t bytes, input bit preamble,
                              input bit include_fcs, ref eth_seg_seq_item item,
                              output string reason);

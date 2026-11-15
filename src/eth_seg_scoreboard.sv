@@ -1,8 +1,5 @@
-// src 检查层：双方向异步 expected/actual FIFO scoreboard。
-// expected 可由 driver 的 EOP 通知或用户 RM 提供；同一队列只选一个期望源。
-// 用户直接 write_before/write_after 默认比较 TX 出口，输入均深拷贝。
-// 每条 analysis_imp 都先复制事务入对应 FIFO，再按到达顺序尝试匹配，因此不依赖时间戳、
-// sequence id 或 UVM 调度顺序。check_phase 对残留 FIFO 报错，确保丢包和重复包可见。
+// 双向异步 expected/actual FIFO scoreboard：期望来自 driver EOP 通知或用户 RM（同一队列只选一个来源），输入均深拷贝。
+// 按到达顺序匹配，不依赖时间戳、sequence id 或 UVM 调度顺序；check_phase 对残留报错，使丢包和重复包可见。
 `uvm_analysis_imp_decl(_expect_tx)
 `uvm_analysis_imp_decl(_expect_rx)
 `uvm_analysis_imp_decl(_actual_tx)
@@ -18,7 +15,6 @@ class eth_seg_scoreboard extends uvm_component;
   eth_seg_seq_item actual_tx_fifo[$], actual_rx_fifo[$];
   int unsigned matched_tx, matched_rx, mismatch_tx, mismatch_rx;
 
-  // 创建四个 analysis implementation；FIFO 所有权归 scoreboard，写入对象会深拷贝。
   function new(string name = "eth_seg_scoreboard", uvm_component parent = null);
     super.new(name, parent);
     expect_tx = new("expect_tx", this);
@@ -27,7 +23,6 @@ class eth_seg_scoreboard extends uvm_component;
     actual_rx = new("actual_rx", this);
   endfunction
 
-  // 比较方向无关的公共字节和 FCS 存在性，再比较对应方向的错误边带。
   function bit same_item(input eth_seg_seq_item exp, input eth_seg_seq_item act,
                          input bit is_rx, output string why);
     why = "";
@@ -52,7 +47,6 @@ class eth_seg_scoreboard extends uvm_component;
     return 1;
   endfunction
 
-  // 尝试匹配一个方向的队首；actual 先到时也可由后续 expected 触发。
   function void try_match(input bit is_rx);
     eth_seg_seq_item exp, act;
     string why;
@@ -70,7 +64,6 @@ class eth_seg_scoreboard extends uvm_component;
     end
   endfunction
 
-  // 接收 TX expected 并复制入 FIFO；driver 原对象之后可安全复用。
   function void write_expect_tx(eth_seg_seq_item item);
     eth_seg_seq_item c;
     if (item == null) begin
@@ -82,7 +75,6 @@ class eth_seg_scoreboard extends uvm_component;
     expect_tx_fifo.push_back(c);
     try_match(0);
   endfunction
-  // 接收 RX expected 并复制入 FIFO。
   function void write_expect_rx(eth_seg_seq_item item);
     eth_seg_seq_item c;
     if (item == null) begin
@@ -94,7 +86,6 @@ class eth_seg_scoreboard extends uvm_component;
     expect_rx_fifo.push_back(c);
     try_match(1);
   endfunction
-  // 接收 TX actual monitor 事务。
   function void write_actual_tx(eth_seg_seq_item item);
     eth_seg_seq_item c;
     if (item == null) begin
@@ -106,7 +97,6 @@ class eth_seg_scoreboard extends uvm_component;
     actual_tx_fifo.push_back(c);
     try_match(0);
   endfunction
-  // 接收 RX actual monitor 事务。
   function void write_actual_rx(eth_seg_seq_item item);
     eth_seg_seq_item c;
     if (item == null) begin
@@ -119,17 +109,17 @@ class eth_seg_scoreboard extends uvm_component;
     try_match(1);
   endfunction
 
-  // RM 直接提交期望 TX 出口整包；允许实际先到，返回不表示已经匹配。
+  // RM 直接提交 TX 出口期望；实际包可以先到，返回不代表已匹配。
   function void write_before(eth_seg_seq_item item);
     write_expect_tx(item);
   endfunction
 
-  // 采样线程直接提交实际 TX 出口整包；复制后可安全复用调用者对象。
+  // 采样线程直接提交 TX 出口实际包。
   function void write_after(eth_seg_seq_item item);
     write_actual_tx(item);
   endfunction
 
-  // 用户明确选择复位丢弃在途事务时调用；只清指定方向，不清累计匹配/错误计数。
+  // 供复位时丢弃在途事务；只清指定方向，不清累计匹配/错误计数。
   function void flush_direction(eth_seg_dir_e dir);
     case (dir)
       ETH_SEG_TX: begin expect_tx_fifo.delete(); actual_tx_fifo.delete(); end
@@ -138,13 +128,11 @@ class eth_seg_scoreboard extends uvm_component;
     endcase
   endfunction
 
-  // 返回四个 FIFO 都为空且没有待比对事务。
   function bit is_idle();
     return expect_tx_fifo.size() == 0 && expect_rx_fifo.size() == 0 &&
            actual_tx_fifo.size() == 0 && actual_rx_fifo.size() == 0;
   endfunction
 
-  // UVM analysis_imp 同名回调必须完成实际入队；该阶段检查残留包并报告丢失/重复。
   function void check_phase(uvm_phase phase);
     super.check_phase(phase);
     if (expect_tx_fifo.size() || actual_tx_fifo.size())

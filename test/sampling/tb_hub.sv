@@ -1,5 +1,4 @@
-// test/sampling 无引脚单元测试入口：UVM 拥有 hub/SCB；本模块只负责启动及总超时。
-// 不依赖 net_packet/AIP，验证订阅缓存的并发和对象所有权契约。
+// hub/SCB 无引脚单元测试顶层：只负责启动与总超时，不依赖 net_packet/AIP。
 `timescale 1ns/1ps
 module tb_hub;
   import uvm_pkg::*;

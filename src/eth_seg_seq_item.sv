@@ -1,7 +1,6 @@
-// src 事务层：以字节而非总线宽度表示报文，使同一 sequence 可运行于三种速率。
-// sequence、driver、monitor 各拥有独立深拷贝；frame_bytes 默认从 DA 开始，包含配置要求的 FCS。
-// 位置字段负一表示未指定/尚未观察，注入字段与观察字段并存以保留错误测试意图。
-// gap_segments 是本帧 EOP 之后的最小有效 idle 段数；无效拍不消费间隔，与负载间隔取最大值。
+// 以字节而非总线宽度表示报文，同一 sequence 可用于三种速率；frame_bytes 从 DA 开始，含配置要求的 FCS。
+// 位置字段为 -1 表示未指定/未观察；注入字段与观察字段并存，以保留错误测试意图。
+// gap_segments：EOP 后最少的有效 idle 段数（无效拍不计），与负载间隔取较大者。
 class eth_seg_seq_item extends uvm_sequence_item;
   `uvm_object_utils(eth_seg_seq_item)
 
@@ -15,12 +14,10 @@ class eth_seg_seq_item extends uvm_sequence_item;
   bit [31:0] fcs = 0;
   time start_time = 0, end_time = 0;
 
-  // 初始化事务身份；数据大小由 sequence 决定，零长度留给 driver 明确拒绝。
   function new(string name = "eth_seg_seq_item");
     super.new(name);
   endfunction
 
-  // 复制所有协议字段和数组内容；错误类型输入立即 fatal，避免半初始化期望报文流入 scoreboard。
   virtual function void do_copy(uvm_object rhs);
     eth_seg_seq_item source;
     super.do_copy(rhs);
@@ -46,7 +43,7 @@ class eth_seg_seq_item extends uvm_sequence_item;
     end_time = source.end_time;
   endfunction
 
-  // 生成简洁诊断；不转储大帧内容，避免回归日志被 payload 淹没。
+  // 不转储帧内容，避免日志被 payload 淹没。
   virtual function string convert2string();
     return $sformatf("dir=%s bytes=%0d sop=%0d eop=%0d empty=%0d fcs_present=%0b fcs_ok=%0b",
                      direction.name(), frame_bytes.size(), start_segment, eop_segment,

@@ -1,6 +1,4 @@
-// test/flow HDL 夹具：十二条 link 由流控测试借用，顶层拥有时钟/复位。
-// 依赖 eth_flow_test_pkg/interface/checker；本层拥有时钟复位和 interface，
-// UVM case 只借用 vif，pin checker 独立验证 ready 延迟与帧边带。
+// 流控测试顶层：十二条 link 的时钟、复位与 interface，pin checker 独立验证 ready 延迟与帧边带。
 `timescale 1ns/1fs
 module eth_flow_link #(parameter int RATE = 100, MODE = 0)(input logic clk, rst_n);
   import uvm_pkg::*;
@@ -22,7 +20,7 @@ module eth_flow_link #(parameter int RATE = 100, MODE = 0)(input logic clk, rst_
     null, $sformatf("uvm_test_top.r%0d_m%0d", RATE, MODE), "vif", vif);
 endmodule
 
-// 采用绝对理想沿时间避免逐半周期取整造成频偏；不依赖 AIP 即可验证核心适配。
+// 时钟按绝对理想沿时间生成，避免逐半周期取整造成频偏。
 module tb_flow;
   import uvm_pkg::*;
   import eth_flow_test_pkg::*;
@@ -47,6 +45,6 @@ module tb_flow;
 
   initial begin #0; run_test("eth_flow_test"); end
 
-  // 包括模型错误造成的无限等待；完成标记和零错误报告仍由日志检查器独立核对。
+  // 全局超时，覆盖模型错误造成的无限等待。
   initial begin #1ms; $fatal(1, "ETH_FLOW_GLOBAL_TIMEOUT"); end
 endmodule

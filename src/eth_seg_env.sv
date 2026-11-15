@@ -1,12 +1,9 @@
-// Environment 层：创建 CLIENT 与 MAC 两个 agent，并将期望/实际分析端口接入 scoreboard。
-// 两个 cfg 可分别指向独立 interface，或在 pin-level 自检中按需共享同一 interface；所有
-// monitor 均保留，因此 passive/DUT 拓扑无需修改 env 结构即可复用。
-// coverage 原类按合同提供 write()，这里用轻量 analysis sink 适配 UVM analysis_port。
+// env：CLIENT/MAC 两个 agent 接入 scoreboard；cfg 可指向独立或同一 interface，monitor 始终保留以复用于 passive/DUT 拓扑。
+// eth_seg_cov_sink 把 analysis_port 适配到 coverage 的 write()。
 class eth_seg_cov_sink #(int RATE = 100) extends uvm_component;
   `uvm_component_param_utils(eth_seg_cov_sink#(RATE))
   uvm_analysis_imp#(eth_seg_seq_item, eth_seg_cov_sink#(RATE)) analysis_export;
   eth_seg_coverage#(RATE) target;
-  // 创建 coverage 分析汇聚器；目标 coverage 由 env 在 build_phase 注入。
   function new(string name, uvm_component parent);
     super.new(name, parent);
     analysis_export = new("analysis_export", this);
@@ -29,12 +26,11 @@ class eth_seg_env #(int RATE = 100) extends uvm_env;
   eth_seg_coverage#(RATE) coverage;
   eth_seg_cov_sink#(RATE) coverage_sink;
 
-  // 创建 env；client/mac 配置由父 test 在 build_phase 前填写。
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
-  // 建立两个角色 agent；父 test 可在 build_phase 前直接填写 client_cfg/mac_cfg。
+  // 父 test 需在 build_phase 前填写 client_cfg/mac_cfg。
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     if (client_cfg == null)
@@ -57,8 +53,8 @@ class eth_seg_env #(int RATE = 100) extends uvm_env;
     end
   endfunction
 
-  // TX 方向期望来自 active CLIENT driver，实际来自 CLIENT TX monitor；RX 同理由 MAC
-  // active driver 与 CLIENT RX monitor 组成。若角色被设为 passive，连接仍安全地省略空端口。
+  // TX 期望来自 CLIENT driver、实际来自 CLIENT TX monitor；RX 期望来自 MAC driver、实际来自 CLIENT RX monitor。
+  // passive 角色的空端口直接跳过。
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
     if (enable_scoreboard && scoreboard != null) begin

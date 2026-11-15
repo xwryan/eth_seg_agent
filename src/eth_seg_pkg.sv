@@ -1,5 +1,4 @@
-// VIP 顶层 package：固定 include 顺序，确保类型、事务、驱动/监视器和 env 在同一编译单元可见。
-// Makefile 仍显式先编译 interface，再编译本 package；不可将本文件拆成多个 RATE package。
+// VIP 顶层 package，按依赖顺序 include 全部组件；interface 需先单独编译，不可拆成按 RATE 的多个 package。
 package eth_seg_pkg;
   import uvm_pkg::*;
   import eth_seg_types_pkg::*;

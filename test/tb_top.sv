@@ -1,5 +1,4 @@
-// 独立 testbench 顶层：同时实例化 100G/200G/400G 三个物理接口，彼此使用独立时钟、复位
-// 和 UVM config_db 配置。三个 interface 各由 client TX 与 MAC RX/ready active agent 自检。
+// smoke 测试顶层：100/200/400G 三个 interface 各用独立时钟、复位与 config_db 键，由 client/MAC active agent 自检。
 `timescale 1ns/1ps
 import uvm_pkg::*;
 import eth_seg_pkg::*;
@@ -19,8 +18,7 @@ module tb_top;
   eth_seg_if #(200) eth_if200(clk_tx200, clk_rx200, tx_rst200_n, rx_rst200_n);
   eth_seg_if #(400) eth_if400(clk_tx400, clk_rx400, tx_rst400_n, rx_rst400_n);
 
-  // 每个参数化实例都挂接独立 pin-level checker；checker 只读公共网络，
-  // 直接验证 ready→valid 两拍、invalid 保持和 segment 边带约束。
+  // 每个实例挂独立 pin checker，直接验证 ready→valid 两拍、invalid 保持与 segment 边带。
   eth_seg_protocol_checker #(.RATE(100)) checker100 (
     .i_clk_tx(clk_tx100), .i_clk_rx(clk_rx100), .i_tx_rst_n(tx_rst100_n), .i_rx_rst_n(rx_rst100_n),
     .i_tx_mac_data(eth_if100.i_tx_mac_data), .i_tx_mac_valid(eth_if100.i_tx_mac_valid),

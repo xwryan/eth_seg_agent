@@ -1,8 +1,5 @@
-// seq_lib 线速发送层：在 eth_flow_pkg 中编译，依赖 flow_control_pkg::rate_model。
-// 本对象拥有模型、计划时间及 segment 取整余量；只借用绑定 agent 的配置。
-// net_packet 负责内容；本层只在事务副本补齐合法短帧并写入已有 gap_segments。
-// 每批发送锁定 sequencer，count/body/采样接口继续复用 eth_base_seq；finish_item
-// 仍仅表示入队，调用者必须等待 monitor/drain。复位或时钟改频后应重新启动批次。
+// 线速发送 sequence（在 eth_flow_pkg 内编译）：用 flow_control rate_model 计算包间 gap_segments。
+// 模型、计划时间与取整余量归本对象；每批锁定 sequencer，复位或时钟改频后应重新启动批次。
 class eth_flow_seq extends eth_base_seq;
   `uvm_object_utils(eth_flow_seq)
 
@@ -19,13 +16,11 @@ class eth_flow_seq extends eth_base_seq;
   protected realtime planned_time;
   longint unsigned wire_bytes_queued = 0;
 
-  // 构造不读取 UVM 层次；start 时 sequencer 才确定，模型归本次批次独占。
   function new(string name = "eth_flow_seq");
     super.new(name);
   endfunction
 
-  // 只读获取三种 agent 特化的配置快照，保持 sequence/Tcl 类型非参数化。
-  // 直接手工拼装的 sequencer 没有标准 agent 配置时明确失败；禁止叠加旧负载节流。
+  // 依次尝试三种 RATE 特化的 agent 配置，使 sequence/Tcl 类型保持非参数化；无标准 agent 或已启用旧负载节流时失败。
   protected function bit read_link();
     eth_seg_sequencer sqr_handle = require_sqr(1);
     eth_seg_agent#(100) a100;
@@ -65,8 +60,8 @@ class eth_flow_seq extends eth_base_seq;
     return 1;
   endfunction
 
-  // 每批重建预算；ceil 累计取整使计划前缀不早于目标，批次边界最多增加一个空段。
-  // 时钟范围用于拒绝无效/无穷数；是否能达到目标速率仍按每包实际接口长度检查。
+  // 每批重建预算；累计 ceil 取整使计划前缀不早于目标，批次边界最多多一个空段。
+  // 时钟范围只拒绝无效/无穷值；能否达到目标速率按每包实际接口长度检查。
   protected function bit init_flow();
     initialized = 0;
     if (!read_link()) return 0;
@@ -88,9 +83,8 @@ class eth_flow_seq extends eth_base_seq;
     return 1;
   endfunction
 
-  // 只修改新事务：正常流量将无 FCS 的短帧补到 60B，避免 RX 注入非法 runt。
-  // 已提供 FCS 的短帧不重算 CRC；需要负向 runt 测试时使用 eth_base_seq。
-  // 接口字节数和线速计费长度分开，前导/FCS 开关只改变前者，不重复扣开销。
+  // 只改新事务：无 FCS 的短帧补到 60B 以免注入 runt，已带 FCS 的短帧不重算 CRC（负向 runt 测试用 eth_base_seq）。
+  // 接口字节数与线速计费长度分开计算，前导/FCS 开关只影响前者。
   protected function bit shape_item(eth_seg_seq_item item, output int wire_bytes);
     int body_bytes, interface_bytes, data_segments, rounded_gap;
     real selected_rate, total_slots, gap_budget, rounded_real;
@@ -137,8 +131,7 @@ class eth_flow_seq extends eth_base_seq;
     return 1;
   endfunction
 
-  // 在实际发送路径推进模型，独立 packet_to_item 转换不消耗预算。
-  // start_item 前已准备好事务，driver 的预取不会丢失附带的 gap_segments。
+  // 只在实际发送路径推进模型（packet_to_item 不消耗预算）；start_item 前填好 gap_segments，driver 预取不会丢失。
   virtual task send_packet(input net_packet_pkg::packet net_pkt);
     eth_seg_seq_item item;
     int wire_bytes;
@@ -156,8 +149,7 @@ class eth_flow_seq extends eth_base_seq;
     last_send_ok = 1;
   endtask
 
-  // 一批一个锁，避免同端口其它 sequence 插包改变累计带宽；UVM kill 自动移除锁。
-  // 正常返回立即释放锁，物理完成仍由 monitor/drain 判断，不重复实现 count 循环。
+  // 一批一个锁，防止同端口其它 sequence 插包改变累计带宽；UVM kill 会自动移除锁。
   virtual task body();
     if (!init_flow()) return;
     lock();
