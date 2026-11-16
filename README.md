@@ -24,6 +24,11 @@ make timing-checker-test
 日志位于 `build/<RATE>/logs/`，`scripts/check_log.py` 检查 UVM summary 和非零错误计数。
 原 smoke testbench 是双 active VIP 自检；新增时序测试使用独立 HDL ready 源，均不包含厂商 F-Tile 加密 RTL 模型。
 
+工程集成直接组合 filelist（`ETH_SEG_AGENT_ROOT` 指向本仓库）：`eth_seg_agent.f` 是基础 VIP
+（interface、types、package、checker，只依赖 UVM）；可选部分 `eth_seg_agent_bind.f`（bind wrapper）、
+`eth_seg_agent_net_packet.f`（前置 aip_core.f、net_packet.f）和 `eth_seg_agent_flow.f`（另需 flow_control.f）
+放在其后。Makefile 的 `AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL` 缺省取对应的 `*_ROOT`。
+
 `gap_segments` / sequence 的 `inter_frame_gap` 以有效 idle segment 计数，TX/RX 均执行。
 固定/随机负载按每帧占用的 segment 数换算间隔，外部 ready/valid 气泡不消费该计数。
 真实 DUT 正沿更新 ready、包内停顿、复位恢复及 checker 字段有效范围见

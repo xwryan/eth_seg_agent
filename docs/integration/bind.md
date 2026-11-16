@@ -154,8 +154,8 @@ base test 不需要 env，也不创建 agent；在 `run_phase` 持有 objection 
 
 ## 4. 编译与验证
 
-普通 VIP 的编译顺序保持 interface → types → package → checker → wrapper → testbench。
-核心 VIP 无 AIP 依赖；使用 Tcl 示例时，先编译 AIP package，再编译示例 package。
+普通 VIP 依次加入 `eth_seg_agent.f`（interface → types → package → checker）、`eth_seg_agent_bind.f`（wrapper），
+最后是 testbench。核心 VIP 无 AIP 依赖；使用 Tcl 示例时，先加入 aip_core 的 `aip_core.f`，再编译示例 package。
 
 在 `10.11.10.53` 载入 VCS 环境后运行：
 

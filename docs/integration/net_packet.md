@@ -22,29 +22,24 @@ eth_seg_seq_item.frame_bytes
 - `net_packet` main：`b8a4c1469511159a59d1a547ed0b5fe896a68e5e`。
 - 可选 Tcl 接入：`aip_core` update，`cd339eff8d4b0982be885a0a71f3e593a4aed239`。
 
-使用 `net_packet/src/net_packet_pkg.sv` 的统一 package 入口。不要再将
+使用 net_packet 自己的 `net_packet.f`（统一 package 入口）。不要再将
 `core/packet.sv` 等组件 include 到另一个 package 或 `$unit`，否则会产生不兼容的
-同名 packet 类型或 include guard 冲突。include 路径参考上游 `filelist_pkg.f`，
-本仓库 Makefile 的 `NET_INC` 已列出这些路径。
+同名 packet 类型或 include guard 冲突。
 
-基本编译顺序如下，原有 VIP 需要的 `+incdir+src` 等路径仍保留：
+基本编译顺序如下（VCS 使用 -ntb_opts uvm-1.2）：
 
 ```text
-uvm_pkg（VCS 使用 -ntb_opts uvm-1.2）
-net_packet/src/net_packet_pkg.sv
-rtl/eth_seg_if.sv
-src/eth_seg_types.sv
-src/eth_seg_pkg.sv
-src/eth_net_packet_pkg.sv
+-f $AIP_CORE_ROOT/aip_core.f
+-f $NET_PACKET_ROOT/net_packet.f
+-f $ETH_SEG_AGENT_ROOT/eth_seg_agent.f
+-f $ETH_SEG_AGENT_ROOT/eth_seg_agent_net_packet.f
 用户 test/sequence package
 ```
 
 不单独编译 `seq_lib/eth_base_seq.sv`，它由 `eth_net_packet_pkg` include。
-若使用 AIP 示例，在同一次编译中把 `aip_core_pkg.sv` 放到 `net_packet_pkg.sv` 前，
-从而启用上游 `packet.load_params()` 的 AIP 参数读取，再编译
-`<flow_control>/src/flow_control_pkg.sv`、`src/eth_flow_pkg.sv` 和
-`examples/aip/eth_net_packet_aip_pkg.sv`。该 AIP 示例额外依赖 flow_control 的公共
-package，include 路径与线速参数见 [线速发送集成](flow.md)。
+若使用 AIP 示例，再依次加入 `flow_control.f`、`eth_seg_agent_flow.f`、`eth_seg_agent_bind.f`
+和 `examples/aip/eth_net_packet_aip_pkg.sv`。该 AIP 示例额外依赖 flow_control 的公共
+package，线速参数见 [线速发送集成](flow.md)。
 
 ## 直接发送一帧
 

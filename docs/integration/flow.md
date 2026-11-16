@@ -1,7 +1,7 @@
 # 按 Ethernet 线速发送
 
 `eth_flow_pkg::eth_flow_seq` 继承 `eth_base_seq`，在本项目 sequence 层复用
-[`flow_control`](https://github.com/Beihang-yuting/flow_control) 的 `flow_control_pkg::rate_model`。
+[`flow_control`](https://github.com/xwryan/flow_control) 的 `flow_control_pkg::rate_model`。
 它按报文实际长度计算预算，写入已有事务字段 `gap_segments`；driver、agent、bind
 和 net_packet 都不增加限速逻辑。默认按绑定端口的 100/200/400G 发送。
 
@@ -11,24 +11,15 @@
 可选流控目标的依赖检查。流控类型统一属于 `flow_control_pkg`，本项目通过
 `import flow_control_pkg::*;` 使用，不在 `eth_flow_pkg` 中重新 include 模型。
 
-在原有 net_packet 编译顺序中，`eth_net_packet_pkg.sv` 后依次增加以下两个源文件：
+各仓库的 filelist 依赖在前、按以下顺序组合（`*_ROOT` 指向各自仓库根目录）：
 
 ```text
-<flow_control>/src/flow_control_pkg.sv
-<eth_seg_agent>/src/eth_flow_pkg.sv
+-f $AIP_CORE_ROOT/aip_core.f -f $NET_PACKET_ROOT/net_packet.f -f $FLOW_CONTROL_ROOT/flow_control.f
+-f $ETH_SEG_AGENT_ROOT/eth_seg_agent.f -f $ETH_SEG_AGENT_ROOT/eth_seg_agent_net_packet.f
+-f $ETH_SEG_AGENT_ROOT/eth_seg_agent_flow.f
 ```
 
-保留本项目 include 路径，并增加：
-
-```text
-+incdir+<flow_control>/src/common
-+incdir+<flow_control>/src/models
-+incdir+<flow_control>/src/core
-+incdir+<flow_control>/src/monitor
-```
-
-上游 `filelist_pkg.f` 提供同样的 package 编译入口（其中路径相对上游仓库根目录）。
-只编译一次 `flow_control_pkg.sv`，不要再混用上游旧 `filelist.f` 或组件的直接 include。
+`flow_control.f` 只编译一次 `flow_control_pkg.sv`，不要再混用组件的直接 include。
 RM/SCB 等其它 package 如需流控模型，也直接 import `flow_control_pkg`，这样共享的是
 同一套类/枚举类型。`eth_flow_pkg` 只提供 Ethernet 适配序列，不重新导出流控类型。
 
