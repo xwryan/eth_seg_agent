@@ -63,7 +63,7 @@ make net-packet-aip-test NET_PACKET=/path/to/net_packet AIP_CORE=/path/to/aip_co
 通过 import 复用外部 `flow_control_pkg::rate_model`（需先编译上游
 `src/flow_control_pkg.sv`）。随机包长逐包计费，包含前导、FCS、padding 和
 IFG，累计余量转成现有 gap_segments；agent/driver 无需增加限速逻辑。
-网络报文 AIP 示例已接入该类，支持每次命令传 rate_gbps/clk_freq_hz。
+网络报文 AIP 示例已接入该类，支持每次命令传 rate_gbps/clk_freq_hz，RoCEv2 另可传 psn_step/va_step 逐包递增。
 使用方式、误差与反压边界见 [线速发送集成](docs/integration/flow.md)。
 
 ```bash

@@ -1,5 +1,6 @@
 // AIP Tcl 网络发包命令示例：每帧按 agent 名读取 net_packet 参数，经 eth_flow_seq 限速发送。
 // 需先编译 aip_core 再编译 net_packet_pkg；sequence 持有每次生成的 packet 与流控模型，本层不创建 env/agent。
+// RoCEv2 报文可用 psn_step/va_step 逐包递增 PSN 与 RETH VA：外部注包给 RDMA 接收时 PSN 必须连续。
 package eth_net_packet_aip_pkg;
   import uvm_pkg::*;
   import aip_core_pkg::*;
@@ -11,6 +12,10 @@ package eth_net_packet_aip_pkg;
 
   class eth_net_packet_aip_seq extends eth_flow_seq;
     `uvm_object_utils(eth_net_packet_aip_seq)
+
+    // 缺省 0（各包相同）：第 i 包 BTH PSN 加 i×psn_step（24 位回绕），带 RETH 的包 VA 加 i×va_step。
+    longint unsigned psn_step;
+    longint unsigned va_step;
 
     function new(string name = "eth_net_packet_aip_seq");
       super.new(name);
@@ -31,10 +36,11 @@ package eth_net_packet_aip_pkg;
       return 1;
     endfunction
 
-    // count/time 由 aip_cmd_seq 处理，其余参数按命令对象名读取；不覆写 agent cfg，未知流控模式和非法 IFG 直接失败。
+    // count/time 由 aip_cmd_seq 处理，其余参数按命令对象名读取；不覆写 agent cfg，未知流控模式、非法 IFG 与
+    // psn_step/va_step 直接失败。
     virtual task body();
       aip_cmd command = aip_cmd::get_handle(get_name());
-      string args, raw;
+      string args, raw, why;
 
       if (command == null) begin
         `uvm_fatal("ETH_FLOW_COMMAND", "AIP flow sequence must be launched through its registered command")
@@ -59,6 +65,13 @@ package eth_net_packet_aip_pkg;
           return;
         end
       end
+      if (!aip_cmd::parse_uint_arg(aip_cmd::get_arg(args, "psn_step"), 24'hffffff, 0, psn_step, why,
+                                   "psn_step") ||
+          !aip_cmd::parse_uint_arg(aip_cmd::get_arg(args, "va_step"), 64'hffff_ffff_ffff_ffff, 0,
+                                   va_step, why, "va_step")) begin
+        `uvm_fatal("ETH_FLOW_ARG", why)
+        return;
+      end
       super.body();
     endtask
 
@@ -69,6 +82,7 @@ package eth_net_packet_aip_pkg;
       packet generated;
       string param_path;
       byte unsigned payload_byte;
+      rocev2_bth bth;
 
       if (sqr_handle == null) return null;
       param_path = sqr_handle.get_parent().get_full_name();
@@ -76,9 +90,22 @@ package eth_net_packet_aip_pkg;
       generated.build_from_template(ETH_IPV4_UDP);
       generated.pkt_len = 256;
       generated.load_params(param_path);
-      `aip_int(param_path, byte unsigned, payload_byte, 8'ha5)
-      generated.payload_mode = PAYLOAD_FIXED;
-      generated.payload_fixed_val = payload_byte;
+      // 未显式给 payload_mode 时按 payload_byte 固定负载；给出时保留 load_params 读到的模式与 pattern。
+      if (!aip_cmdline_query::present(param_path, "payload_mode")) begin
+        `aip_int(param_path, byte unsigned, payload_byte, 8'ha5)
+        generated.payload_mode = PAYLOAD_FIXED;
+        generated.payload_fixed_val = payload_byte;
+      end
+      if (psn_step != 0 || va_step != 0) begin
+        bth = generated.get_rocev2();
+        if (bth == null) begin
+          `uvm_fatal("ETH_NET_AIP_ROCE", "psn_step/va_step require a RoCEv2 template")
+          return null;
+        end
+        bth.psn += 24'(packet_index * psn_step);
+        if (bth.has_reth())
+          bth.reth_va += packet_index * va_step;
+      end
       if (generated.pkt_len < 14 || generated.pkt_len > 16384 ||
           generated.pkt_len < generated.get_all_headers_length() + generated.get_all_trailers_length()) begin
         `uvm_fatal("ETH_NET_AIP_LENGTH", "pkt_len must be 14..16384 and contain the complete protocol stack")

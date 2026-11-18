@@ -129,6 +129,23 @@ package eth_net_packet_aip_test_pkg;
       return p;
     endfunction
 
+    // 对应 send.tcl 的 eth2 第二批：WRITE_IMM、INCREMENT 负载，第 index 包 PSN/VA 按步长递增，PSN 跨 24 位回绕。
+    function packet roce_step_frame(input int unsigned index);
+      packet p = reference_frame(ETH_IPV4_UDP_ROCEV2, 278);
+      rocev2_bth bth = p.get_rocev2();
+
+      bth.opcode = RC_RDMA_WRITE_ONLY_IMM;
+      bth.dest_qp = 24'h12;
+      bth.psn = 24'(24'hfffffe + index);
+      bth.reth_va = 64'h1_0000 + index * 64'h400;
+      bth.reth_r_key = 32'h202;
+      bth.reth_dma_len = 200;
+      bth.imm_data = 32'h1234abcd;
+      p.payload_mode = PAYLOAD_INCREMENT;
+      p.do_pack();
+      return p;
+    endfunction
+
     function void end_of_elaboration_phase(uvm_phase phase);
       super.end_of_elaboration_phase(phase);
       if (eth_seg_sequencer::get_sqr("eth0") != eth0.agt.sequencer ||
@@ -141,6 +158,8 @@ package eth_net_packet_aip_test_pkg;
       eth0.expect_batch(reference_frame(ETH_IPV4_UDP, 64, 48'h123456789abc, 8'h5a), 1);
       eth1.expect_batch(reference_frame(ETH_IPV6_TCP, 128, 48'hfedcba987654), 3);
       eth2.expect_batch(reference_frame(ETH_IPV4_UDP_ROCEV2, 129), 1);
+      for (int unsigned i = 0; i < 3; i++)
+        eth2.expect_batch(roce_step_frame(i), 1);
       eth3.expect_batch(reference_frame(ETH_IPV4_UDP, 512, 48'h010203040506), 4);
     endfunction
 
@@ -169,7 +188,7 @@ package eth_net_packet_aip_test_pkg;
         if (delta < 94 || delta > 285)
           `uvm_error("ETH_NET_AIP_RANDOM", "random rate arguments did not bound physical spacing")
       end
-      `uvm_info("ETH_NET_AIP_TEST_COMPLETE", "4 named IPs: 3/3/1/4 network frames matched, including runtime parameters and RoCEv2 ICRC", UVM_NONE)
+      `uvm_info("ETH_NET_AIP_TEST_COMPLETE", "4 named IPs: 3/3/4/4 network frames matched, including runtime parameters, RoCEv2 ICRC and PSN/VA steps", UVM_NONE)
       phase.drop_objection(this);
     endtask
   endclass

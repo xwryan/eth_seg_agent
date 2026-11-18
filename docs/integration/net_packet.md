@@ -185,8 +185,24 @@ eth0_net_send count=10 rate_gbps=100 clk_freq_hz=415039062.5
 每个命令创建新的发送 sequence，Monitor 订阅缓存在 agent 内持续存在。
 没有 load_send_config；参数在每包生成时直接读取，之后的修改不影响已经入队的副本。
 当前 aip_cmd_seq 自动解析 count/time，包装类另解析 rate_gbps/clk_freq_hz/ifg_bytes/
-mode/rate_min_gbps/rate_max_gbps；其它报文参数使用上面的 set_param，
+mode/rate_min_gbps/rate_max_gbps/psn_step/va_step；其它报文参数使用上面的 set_param，
 没有自动支持 `eth0_net_send count=10 pkt_len=256` 这样的任意字段映射。
+
+RoCEv2 报文的 `psn_step`/`va_step` 缺省为 0（各包相同）：第 i 包的 BTH PSN 加 i×psn_step（24 位回绕），
+带 RETH 的 opcode（如 `RC_RDMA_WRITE_ONLY_IMM`）VA 加 i×va_step。外部注包给 RDMA 接收时 PSN 必须连续，例如：
+
+```tcl
+set_param path=eth0.tmpl value=ETH_IPV4_UDP_ROCEV2
+set_param path=eth0.pkt_len value=314
+set_param path=eth0.outer_rocev2.opcode value=RC_SEND_ONLY
+set_param path=eth0.outer_rocev2.dest_qp value=0x2
+set_param path=eth0.outer_rocev2.psn value=0x100
+set_param path=eth0.outer_rocev2.ack_req value=1
+eth0_net_send count=4 psn_step=1
+```
+
+负载默认按 `payload_byte` 固定；显式设置 `payload_mode`（如 `PAYLOAD_INCREMENT`）后保留该模式与
+`payload_pattern`，`payload_byte` 不再覆盖。
 
 ## 验证入口
 
