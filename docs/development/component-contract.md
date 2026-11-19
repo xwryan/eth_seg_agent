@@ -1,6 +1,6 @@
 # 组件实现约定
 
-此文件固定协作接口，细节修改先通知主代理。类文件由 eth_seg_pkg 按顺序 include。
+此文件记录各组件之间约定的接口（命名、字段、端口与行为），修改其中任一项时同步更新本文件。类文件由 eth_seg_pkg 按顺序 include。
 
 - 参数名统一 `RATE=100`；interface 参数名 `ETH_RATE_G=100`，类型引用 `virtual eth_seg_if #(RATE)`。
 - `eth_seg_types_pkg`：枚举 `ETH_SEG_CLIENT/ETH_SEG_MAC`，`ETH_SEG_CONTINUOUS/ETH_SEG_PERIODIC/ETH_SEG_RANDOM`，`ETH_SEG_TX/ETH_SEG_RX`；`typedef byte unsigned eth_seg_byte_queue_t[$]`。

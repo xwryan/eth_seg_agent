@@ -128,7 +128,7 @@ bind 的 time-zero 创建方式仍为 `#0; run_test()`。
 再编译示例 package 和用户环境。采样组件本身不调用 AIP（基础 VIP 的 cfg 读参才需要 aip_core）；
 不用 net_packet 时，也可直接调用 `eth_seg_sequencer` 的三个同名采样接口。
 
-在 53 的 VCS 环境运行：
+载入 VCS 环境后运行：
 
 ```bash
 make hub-test SEED=7

@@ -17,10 +17,8 @@ eth_seg_seq_item.frame_bytes
 
 ## 编译与依赖
 
-已核对的上游版本：
-
-- `net_packet` main：`b8a4c1469511159a59d1a547ed0b5fe896a68e5e`。
-- 可选 Tcl 接入：`aip_core` update，`cd339eff8d4b0982be885a0a71f3e593a4aed239`。
+依赖 net_packet 与 aip_core（基础 VIP 已需要 aip_core，可选 Tcl 接入也直接使用它），分别经各自的
+`net_packet.f`、`aip_core.f` 编译，路径由 `NET_PACKET_ROOT`、`AIP_CORE_ROOT` 指定。
 
 使用 net_packet 自己的 `net_packet.f`（统一 package 入口）。不要再将
 `core/packet.sv` 等组件 include 到另一个 package 或 `$unit`，否则会产生不兼容的
@@ -206,7 +204,7 @@ eth0_net_send count=4 psn_step=1
 
 ## 验证入口
 
-在 `10.11.10.53` 载入 VCS/license 环境后运行：
+载入 VCS/license 环境后运行：
 
 ```bash
 make net-packet-test NET_PACKET=/path/to/net_packet SEED=7

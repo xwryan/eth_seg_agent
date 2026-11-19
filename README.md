@@ -10,7 +10,7 @@
 携带 FCS，`inject_fcs_error` 只在 FCS 开启时翻转 CRC；驱动 `item_done` 仅表示已复制入队，
 物理完成须核对 `sent_ap`/monitor 的预期数量及 scoreboard 排空，不能仅凭 `is_idle()` 判定。
 
-在 `10.11.10.53` 载入 VCS/UVM 1.2 与 license 环境后运行（全部目标都需 aip_core，`AIP_CORE` 缺省取 `AIP_CORE_ROOT`）：
+载入 VCS（UVM 1.2）与 license 环境后运行（全部目标都需 aip_core，`AIP_CORE` 缺省取 `AIP_CORE_ROOT`）：
 
 ```text
 make compile RATE=100
@@ -41,11 +41,14 @@ role/is_active/eth_rate_g 决定组件构建，只在 build 读取一次；aip �
 真实 DUT 正沿更新 ready、包内停顿、复位恢复及 checker 字段有效范围见
 [时序审查与定向回归](docs/development/timing-audit.md)。
 
-接入真实 DUT 时，配置必须使用与接口参数一致的句柄类型，例如
-`uvm_config_db#(virtual eth_seg_if#(200))::set(null, "uvm_test_top", "vif", vif200)`；
-`eth_seg_config#(200).eth_rate_g` 也必须保持 200，否则 agent build 会立即报告错误。
+接入真实 DUT 时，agent 只从 `cfg.vif` 取接口：父组件可直接写 `agent.cfg`，否则 agent 在 build 时按键 `"cfg"`
+读取 `uvm_config_db#(eth_seg_config#(RATE))`（monitor/coverage 单独使用时同样回退到该键；`eth_seg_env` 两种都做）。
+VIP 不读取名为 `"vif"` 的 config_db 项；testbench 可自行用类型化句柄把接口交给 test，例如 smoke 的
+`uvm_config_db#(virtual eth_seg_if#(200))::set(null, "uvm_test_top", "vif200", eth_if200)`，再写入 `cfg.vif`。
+cfg 与 vif 的 RATE 必须一致，`eth_seg_config#(200).eth_rate_g` 也必须保持 200，否则 agent build 会立即报告错误。
+bind wrapper 直接设置 `cfg.vif`，另发布 `<AGENT_NAME>_agent`/`_cfg`/`_vif` 三个键供 test 取用。
 
-如需按图片中的方式，在 module 内封装 interface 和 root agent 后 `bind` 到已有 DUT，
+如需把 interface 和 root agent 封装在一个 module 里，再用 `bind` 挂到已有 DUT 的 MAC 接口 net 上，
 使用 [eth_seg_bind_wrapper](bind/eth_seg_bind_wrapper.sv)，只需要 `AGENT_NAME` 和 `RATE`。
 cfg 保持默认值，顶层 `#0; run_test();` 启动；agent 自动发布静态
 `eth_seg_sequencer::sqr[agent_name]`，env 无需创建 agent 或转接 sequencer。
@@ -58,7 +61,7 @@ MAC active agent 支持 loopback：TX monitor 采到的每帧经有界队列（`
 `'+uvm_set_severity=*,ETH_LOOPBACK_TX_ERROR,UVM_ERROR,UVM_WARNING'` 或 report catcher 降级。
 FCS 处理、复位与溢出语义见 [bind 集成说明](docs/integration/bind.md#5-loopback)。
 
-[AIP Tcl 示例](examples/aip/eth_seg_aip_pkg.sv) 使用 `aip_core/update` 的 `aip_cmd_seq`
+[AIP Tcl 示例](examples/aip/eth_seg_aip_pkg.sv) 使用 aip_core 的 `aip_cmd_seq`
 启动命名 sequencer，通过 `aip_int` 读取发包长度。
 验证入口为 `make aip-test AIP_CORE=/path/to/aip_core`，包含四个 IP 的真实 Tcl 发包测试。
 

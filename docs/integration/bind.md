@@ -52,7 +52,14 @@ bind tb_top.u_dut.u_ip3 eth_seg_bind_wrapper #(.AGENT_NAME("eth3"), .RATE(100)) 
 | 200 | 8 | 512 |
 | 400 | 16 | 1024 |
 
-输出固定采用图片中的 `assign (supply1, supply0)`，按 interface 驱动所有权决定是否驱动。
+wrapper 用 supply 强度的连续赋值接管 DUT net：interface 一侧只回读 DUT 引脚，monitor 看到的是解析后的
+实际值；某方向的驱动权（`tx/rx/ready_drive_enabled`）被 driver 领取后才输出 `drv_*`，否则为 `'z`。以 TX data 为例：
+
+```systemverilog
+assign (supply1, supply0) u_eth_if.i_tx_mac_data = i_tx_mac_data;                // 回读 DUT net
+assign (supply1, supply0) i_tx_mac_data = tx_enable ? u_eth_if.drv_tx_data : 'z;  // 领取后驱动
+```
+
 绑定点必须是 `wire/tri` 网络；对于 IP 内过程赋值的变量，选择父层连接 IP 的 net。
 TX invalid 拍仍保持驱动，不能用 valid 为条件释放引脚。不同 wrapper 的同一方向只能
 有一个 active 驱动者。TX valid 固定等于 ready 延后两拍。
@@ -129,9 +136,10 @@ eth_seg_sequencer::sqr["eth3"]
 推荐查询接口 `eth_seg_sequencer::get_sqr("eth0")`：名字不存在时返回 null，不插入表项。
 表只保存借用句柄，不创建或共享实际 sequencer；四个 IP 有四个独立仲裁器。
 通过同一静态句柄取得整包以及接入 RM/SCB，参见 [整包采样说明](sampling.md)。
-如果 agent 由普通 env 创建，索引使用完整名字，例如 `uvm_test_top.env.client`。
+如果 agent 由普通 env 创建，索引使用完整名字：`eth_seg_env` 实例 `env` 中为 `uvm_test_top.env.client_agent`
+和 `uvm_test_top.env.mac_agent`。cfg 读参路径同为该名字，例如 `+uvm_test_top.env.mac_agent.loopback=1`。
 
-基于 `aip_core/update` 的可选示例在 `examples/aip/eth_seg_aip_pkg.sv`：
+可选的 AIP 示例在 `examples/aip/eth_seg_aip_pkg.sv`，直接使用 aip_core 的 `aip_cmd_seq`：
 
 ```systemverilog
 // 该 sequence 提供 count 字段，body 内按当前 agent 名字读取 frame_length。
@@ -171,7 +179,7 @@ base test 不需要 env，也不创建 agent；在 `run_phase` 持有 objection 
 `eth_seg_agent_bind.f`（wrapper），最后是 testbench；aip_core 需 `-timescale=1ns/1ps`，cfg 读参直接调用其宏。
 使用 Tcl 示例时再编译示例 package。
 
-在 `10.11.10.53` 载入 VCS 环境后运行：
+载入 VCS 环境后运行：
 
 ```bash
 make bind-test SEED=7
@@ -181,15 +189,15 @@ make loopback-test SEED=7
 make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SEED=7
 ```
 
-AIP 示例对照的 `update` 提交为 `cd339eff8d4b0982be885a0a71f3e593a4aed239`。
+AIP 示例和测试使用 `AIP_CORE` 指向的 aip_core（经其 `aip_core.f` 编译，Tcl 端加载其 `dist/aip_init.tcl`）。
 不自动下载、修改或提交外部依赖。完整 Tcl 用例见 `test/aip/send.tcl`。
 
 bind 用例覆盖四个 IP（三种速率）、同速率多实例静态 sqr 隔离、默认 cfg、用户改 cfg、
 #0 启动、双向报文和所有边带。AIP 用例通过真实 UCLI/Tcl 命令发包，四个默认 CLIENT
 分别接收 3/3/1/4 帧，并逐字节核对长度、数据与端口隔离。两者都是接口自检壳，不含
-厂商 MAC RTL。日志分别在 `build/bind/logs`、`build/aip/logs`，实际验证记录见 `results/bind_static`。
+厂商 MAC RTL。日志分别在 `build/bind/logs`、`build/aip/logs`。
 
-原 bind 简化版本于 2026-10-30 在 53 的 VCS W-2024.09-SP1 / UVM 1.2 上通过：bind seed 7/19、
+原 bind 简化版本于 2026-10-30 在 VCS W-2024.09-SP1 / UVM 1.2 上通过：bind seed 7/19、
 smoke seed 7、AIP Tcl seed 7；最终 UVM WARNING/ERROR/FATAL 和 VCS 原生诊断均为 0。
 
 整包采样扩展增加 passive sequencer 的直接取包检查，最新验证见

@@ -112,7 +112,7 @@ time 模式到期只取消 sequence，已经被 driver 接收的包和间隔仍�
 
 ## 验证
 
-在 10.11.10.53 载入 VCS/license 环境：
+载入 VCS/license 环境后运行：
 
 ```bash
 make flow-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SEED=7
@@ -126,7 +126,7 @@ make net-packet-aip-test NET_PACKET=/path/to/net_packet \
 AIP 测试通过真实 Tcl 参数核对实际包间距。测试使用 VIP 与响应壳，不包含厂商 MAC RTL。
 flow_control 自带 report 统计计划时间，不能替代这些物理带宽观察。
 
-2026-11-03 已在 53 的 VCS W-2024.09-SP1 / UVM 1.2、seed=1 完成验证：
+2026-11-03 已在 VCS W-2024.09-SP1 / UVM 1.2、seed=1 完成验证：
 
 | 测试 | 结果 |
 |---|---|
@@ -136,11 +136,10 @@ flow_control 自带 report 统计计划时间，不能替代这些物理带宽�
 
 所有最终测试 UVM WARNING/ERROR/FATAL 为 0；预期负向的 5 个 fatal 由精确 ID catcher
 捕获。两个频点满速场景的实测/目标比值范围分别为 0.99993813～0.999997885 和
-0.999941215～0.999995145，差异来自有限窗口末端的小数 segment 取整。
-本地完整日志保存在忽略目录 `results/flow_validation/final/`，不作为产品依赖提交。
+0.999941215～0.999995145，差异来自有限窗口末端的小数 segment 取整。完整日志未随仓库提交。
 
-同日切换为 `flow_control_pkg` 后，在相同主机、VCS/UVM 版本和 seed 下完成回归：
+同日切换为 `flow_control_pkg` 后，在相同 VCS/UVM 版本和 seed 下完成回归：
 两个频点各 96 组检查和 5 个预期负向检查、AIP 四端口 3/3/1/4 帧均通过，最终 UVM
 WARNING/ERROR/FATAL 为 0，flow/AIP 编译器 warning 为 0。上游新增 package 的
 跨作用域类型/时间换算测试通过，原六组测试共 89 passed、0 failed；原用例仍输出
-49 条未注册统计队列的运行期提示。此次日志位于 `results/flow_package_validation/`。
+49 条未注册统计队列的运行期提示。
