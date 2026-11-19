@@ -1,5 +1,6 @@
-// segmented agent：按 CLIENT/MAC 角色创建发送、接收和 ready 驱动，双向 monitor 始终存在。
-// connect 时把 sequencer 发布到静态表（Tcl 按名字查找），final 时撤销；passive 也创建仅供采样的 sequencer。
+// segmented agent：按 CLIENT/MAC 角色创建发送、接收和 ready 驱动，双向 monitor 始终存在；MAC active 另建 loopback。
+// build 先按 agent 名经 aip_core 读 cfg；connect 时把 sequencer 发布到静态表（Tcl 按名字查找），final 时撤销；
+// passive 也创建仅供采样的 sequencer。
 class eth_seg_agent #(int RATE = 100) extends uvm_agent;
   `uvm_component_param_utils(eth_seg_agent#(RATE))
 
@@ -11,6 +12,7 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
   eth_seg_ready_driver#(RATE) ready_driver;
   eth_seg_tx_monitor#(RATE) tx_monitor;
   eth_seg_rx_monitor#(RATE) rx_monitor;
+  eth_seg_loopback#(RATE) loopback;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -25,6 +27,8 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
       cfg = eth_seg_config#(RATE)::type_id::create("cfg");
       `uvm_fatal("ETH_AGENT_CFG", "eth_seg_agent requires cfg from parent or config_db")
     end
+    // 参数路径即登记名（bind 时为 AGENT_NAME）；aip override/plusarg 优先于 cfg 现值，构建期字段只在此读取。
+    cfg.load_params(get_full_name());
     if (!cfg.validate(reason)) `uvm_fatal("ETH_AGENT_CFG", reason)
 
     tx_monitor = eth_seg_tx_monitor#(RATE)::type_id::create("tx_monitor", this);
@@ -45,8 +49,13 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
         ETH_SEG_MAC: begin
           rx_driver = eth_seg_rx_driver#(RATE)::type_id::create("rx_driver", this);
           ready_driver = eth_seg_ready_driver#(RATE)::type_id::create("ready_driver", this);
+          // loopback 常驻以支持中途开关，关闭时不占用 sequencer。
+          loopback = eth_seg_loopback#(RATE)::type_id::create("loopback", this);
           rx_driver.cfg = cfg;
           ready_driver.cfg = cfg;
+          loopback.cfg = cfg;
+          loopback.sequencer = sequencer;
+          loopback.param_path = get_full_name();
         end
         default: `uvm_fatal("ETH_AGENT_ROLE", "unsupported eth_seg_config.role")
       endcase
@@ -65,6 +74,11 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
     rx_monitor.item_collected_port.connect(monitor_hub.sample_rx);
     tx_monitor.reset_state_port.connect(monitor_hub.reset_tx);
     rx_monitor.reset_state_port.connect(monitor_hub.reset_rx);
+    if (loopback != null) begin
+      tx_monitor.item_collected_port.connect(loopback.tx_export);
+      rx_driver.sent_ap.connect(loopback.sent_export);
+      monitor_hub.reset_ap.connect(loopback.reset_export);
+    end
     sequencer.can_send = (tx_driver != null || rx_driver != null);
     eth_seg_sequencer::register_sqr(get_full_name(), sequencer);
   endfunction

@@ -1,5 +1,5 @@
 // agent 配置：编译期 RATE（贯穿 vif 类型，防止误连不同宽度接口）与运行期角色、格式、节奏策略。
-// 子组件共享同一对象；运行中不应改变格式或队列深度。
+// 子组件共享同一对象；运行中不应改变格式或队列深度。字段可按 agent 名经 aip_core 读参（load_params）。
 class eth_seg_config #(int RATE = 100) extends uvm_object;
   `uvm_object_param_utils(eth_seg_config#(RATE))
 
@@ -17,9 +17,43 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
   bit random_load = 0;
   int load_min_pct = 10, load_max_pct = 100;
   int max_pending = 64;
+  bit loopback = 0; // 仅 MAC active：TX monitor 整帧经 rx_driver 回灌 RX，逐帧重读
 
   function new(string name = "eth_seg_config");
     super.new(name);
+  endfunction
+
+  // 每字段一个 aip 宏，参数名即字段名（+<path>.<field>=v），缺省取当前值；agent build 开头调用一次。
+  // eth_rate_g/role/is_active 决定组件构建，此后不再读取；运行中只有 loopback 按帧重读（Tcl set_param 可改）。
+  function void load_params(string path);
+    `aip_int(path, int, eth_rate_g, eth_rate_g)
+    `aip_enum(path, eth_seg_role_e, role, role)
+    `aip_enum(path, uvm_active_passive_enum, is_active, is_active)
+    `aip_int(path, bit, preamble_passthrough, preamble_passthrough)
+    `aip_int(path, bit, include_fcs, include_fcs)
+    `aip_int(path, bit, enable_protocol_check, enable_protocol_check)
+    `aip_enum(path, eth_seg_pattern_e, ready_pattern, ready_pattern)
+    `aip_enum(path, eth_seg_pattern_e, rx_valid_pattern, rx_valid_pattern)
+    `aip_int(path, int, ready_high_cycles, ready_high_cycles)
+    `aip_int(path, int, ready_low_cycles, ready_low_cycles)
+    `aip_int(path, int, ready_high_pct, ready_high_pct)
+    `aip_int(path, int, rx_valid_high_cycles, rx_valid_high_cycles)
+    `aip_int(path, int, rx_valid_low_cycles, rx_valid_low_cycles)
+    `aip_int(path, int, rx_valid_high_pct, rx_valid_high_pct)
+    `aip_int(path, int, traffic_load_pct, traffic_load_pct)
+    `aip_int(path, bit, random_load, random_load)
+    `aip_int(path, int, load_min_pct, load_min_pct)
+    `aip_int(path, int, load_max_pct, load_max_pct)
+    `aip_int(path, int, max_pending, max_pending)
+    void'(sample_loopback(path));
+  endfunction
+
+  // loopback 的唯一读参点：build 读一次，loopback 组件在每帧 EOP 再读，plusarg/Tcl override 可中途开关；
+  // 未给出该参数时保留当前值（也可直接改 cfg.loopback），逐帧读取不刷屏。
+  function bit sample_loopback(string path);
+    if (aip_cmdline_query::present(path, "loopback"))
+      `aip_int(path, bit, loopback, loopback)
+    return loopback;
   endfunction
 
   // 把本帧占用的有效段数换算为包后 idle 段数（TX/RX 共用）：随机模式每帧抽一次负载百分比，向上取整使目标负载为上限；
@@ -64,6 +98,8 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
              !(load_max_pct inside {[1:100]}) || load_min_pct > load_max_pct)
       reason = "load percentage must be 1..100 with min <= max";
     else if (max_pending <= 0) reason = "max_pending must be positive";
+    else if (loopback && !(role == ETH_SEG_MAC && is_active == UVM_ACTIVE))
+      reason = "loopback requires role ETH_SEG_MAC and is_active UVM_ACTIVE";
     return reason == "";
   endfunction
 endclass

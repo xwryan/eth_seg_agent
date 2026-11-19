@@ -10,7 +10,7 @@
 携带 FCS，`inject_fcs_error` 只在 FCS 开启时翻转 CRC；驱动 `item_done` 仅表示已复制入队，
 物理完成须核对 `sent_ap`/monitor 的预期数量及 scoreboard 排空，不能仅凭 `is_idle()` 判定。
 
-在 `10.11.10.53` 载入 VCS/UVM 1.2 与 license 环境后运行：
+在 `10.11.10.53` 载入 VCS/UVM 1.2 与 license 环境后运行（全部目标都需 aip_core，`AIP_CORE` 缺省取 `AIP_CORE_ROOT`）：
 
 ```text
 make compile RATE=100
@@ -19,15 +19,22 @@ make regress
 make bind-test SEED=7
 make timing-test SEED=7
 make timing-checker-test
+make loopback-test SEED=7
+make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SEED=7
 ```
 
 日志位于 `build/<RATE>/logs/`，`scripts/check_log.py` 检查 UVM summary 和非零错误计数。
 原 smoke testbench 是双 active VIP 自检；新增时序测试使用独立 HDL ready 源，均不包含厂商 F-Tile 加密 RTL 模型。
 
-工程集成直接组合 filelist（`ETH_SEG_AGENT_ROOT` 指向本仓库）：`eth_seg_agent.f` 是基础 VIP
-（interface、types、package、checker，只依赖 UVM）；可选部分 `eth_seg_agent_bind.f`（bind wrapper）、
-`eth_seg_agent_net_packet.f`（前置 aip_core.f、net_packet.f）和 `eth_seg_agent_flow.f`（另需 flow_control.f）
-放在其后。Makefile 的 `AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL` 缺省取对应的 `*_ROOT`。
+工程集成直接组合 filelist（`ETH_SEG_AGENT_ROOT` 指向本仓库）：先放 aip_core 的 `aip_core.f`（cfg 用
+aip_core 宏读参，需 `-timescale=1ns/1ps`），再放基础 VIP `eth_seg_agent.f`（interface、types、package、checker）；
+可选部分 `eth_seg_agent_bind.f`（bind wrapper）、`eth_seg_agent_net_packet.f`（另需 net_packet.f）和
+`eth_seg_agent_flow.f`（另需 flow_control.f）放在其后。Makefile 的 `AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL`
+缺省取对应的 `*_ROOT`。aip_core 自带的 `aip_clk.sv` 声明 `timescale 1ns/1fs`，全局精度因此为 1fs。
+
+agent build 开头按登记名（bind 时即 `AGENT_NAME`）用 aip_core 宏读取 cfg 全部字段，未给出的保持现值，
+例如 `+eth0.include_fcs=1 +eth0.role=ETH_SEG_MAC +eth0.max_pending=8`（Tcl bridge 在 run 阶段才工作，build 读参用 plusarg）。
+role/is_active/eth_rate_g 决定组件构建，只在 build 读取一次；aip 的叶名回退会让 `+include_fcs=1` 作用于所有 agent。
 
 `gap_segments` / sequence 的 `inter_frame_gap` 以有效 idle segment 计数，TX/RX 均执行。
 固定/随机负载按每帧占用的 segment 数换算间隔，外部 ready/valid 气泡不消费该计数。
@@ -44,8 +51,15 @@ cfg 保持默认值，顶层 `#0; run_test();` 启动；agent 自动发布静态
 `eth_seg_sequencer::sqr[agent_name]`，env 无需创建 agent 或转接 sequencer。
 完整接线、配置与时序约定见 [bind 集成说明](docs/integration/bind.md)。
 
+MAC active agent 支持 loopback：TX monitor 采到的每帧经有界队列（`max_pending`）和自身 sequencer
+原样交给 rx_driver 回灌 RX，可用于 VTX → DUT → ETH TX → ETH RX → DUT → VRX 端到端测试。开关 `cfg.loopback`
+按帧经 aip 重读，`+eth0.loopback=1` 或运行中 `set_param path=eth0.loopback value=0/1` 即可。开启期间带 EOP error
+或坏 FCS 的 TX 帧照样原样回环，同时报 `ETH_LOOPBACK_TX_ERROR`（UVM_ERROR）；故意注错的测试用
+`'+uvm_set_severity=*,ETH_LOOPBACK_TX_ERROR,UVM_ERROR,UVM_WARNING'` 或 report catcher 降级。
+FCS 处理、复位与溢出语义见 [bind 集成说明](docs/integration/bind.md#5-loopback)。
+
 [AIP Tcl 示例](examples/aip/eth_seg_aip_pkg.sv) 使用 `aip_core/update` 的 `aip_cmd_seq`
-启动命名 sequencer，通过 `aip_int` 读取发包长度；核心 VIP 不依赖 AIP。
+启动命名 sequencer，通过 `aip_int` 读取发包长度。
 验证入口为 `make aip-test AIP_CORE=/path/to/aip_core`，包含四个 IP 的真实 Tcl 发包测试。
 
 网络报文使用可选的 `eth_net_packet_pkg::eth_base_seq`：把

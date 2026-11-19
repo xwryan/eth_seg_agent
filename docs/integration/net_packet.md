@@ -12,8 +12,8 @@ eth_seg_seq_item.frame_bytes
 ```
 
 适配类型位于 `eth_net_packet_pkg`，实现文件为 `seq_lib/eth_base_seq.sv`。
-原有 `eth_seg_base_seq` / `eth_seg_frame_seq` 继续提供基础字节刺激；基础 VIP 不依赖
-`net_packet` 或 AIP，只有使用网络报文适配时才编译额外 package。
+原有 `eth_seg_base_seq` / `eth_seg_frame_seq` 继续提供基础字节刺激；基础 VIP 前置 aip_core（cfg 读参），
+不依赖 `net_packet`，只有使用网络报文适配时才编译额外 package。
 
 ## 编译与依赖
 

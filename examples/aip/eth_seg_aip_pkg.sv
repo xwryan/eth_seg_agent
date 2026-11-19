@@ -1,4 +1,4 @@
-// 可选 AIP 接入示例：把 Ethernet frame sequence 注册为 Tcl 命令；核心 VIP 不依赖 AIP，本层不创建 agent/env。
+// 可选 AIP 接入示例：把 Ethernet frame sequence 注册为 Tcl 命令；本层不创建 agent/env（agent cfg 读参与 loopback 开关在核心 VIP）。
 package eth_seg_aip_pkg;
   import uvm_pkg::*;
   import aip_core_pkg::*;

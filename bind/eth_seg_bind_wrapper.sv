@@ -1,5 +1,6 @@
 // bind 封装：在已有 DUT net 上实例化 interface、root agent 与协议 checker；只暴露名字和速率，行为配置沿用 cfg 默认值，
-// 由用户在 build 前调整。initial 内只做零时间同步创建，顶层先 #0 再调用唯一的 run_test()。
+// 由用户在 build 前调整或用 +<AGENT_NAME>.<字段> plusarg 覆盖（agent build 读参）。
+// initial 内只做零时间同步创建，顶层先 #0 再调用唯一的 run_test()。
 module eth_seg_bind_wrapper #(
   parameter int RATE = 100,
   parameter string AGENT_NAME = "",
