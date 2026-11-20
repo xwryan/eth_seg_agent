@@ -18,13 +18,14 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
   int load_min_pct = 10, load_max_pct = 100;
   int max_pending = 64;
   bit loopback = 0; // 仅 MAC active：TX monitor 整帧经 rx_driver 回灌 RX，逐帧重读
+  bit shm = 0;      // 仅 MAC active，需可选 eth_seg_shm_pkg：TX 整帧进 SHM fabric，对端帧经 rx_driver 回灌 RX；与 loopback 互斥
 
   function new(string name = "eth_seg_config");
     super.new(name);
   endfunction
 
   // 每字段一个 aip 宏，参数名即字段名（+<path>.<field>=v），缺省取当前值；agent build 开头调用一次。
-  // eth_rate_g/role/is_active 决定组件构建，此后不再读取；运行中只有 loopback 按帧重读（Tcl set_param 可改）。
+  // eth_rate_g/role/is_active/shm 决定组件构建，此后不再读取；运行中只有 loopback 按帧重读（Tcl set_param 可改）。
   function void load_params(string path);
     `aip_int(path, int, eth_rate_g, eth_rate_g)
     `aip_enum(path, eth_seg_role_e, role, role)
@@ -45,6 +46,7 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
     `aip_int(path, int, load_min_pct, load_min_pct)
     `aip_int(path, int, load_max_pct, load_max_pct)
     `aip_int(path, int, max_pending, max_pending)
+    `aip_int(path, bit, shm, shm)
     void'(sample_loopback(path));
   endfunction
 
@@ -100,6 +102,9 @@ class eth_seg_config #(int RATE = 100) extends uvm_object;
     else if (max_pending <= 0) reason = "max_pending must be positive";
     else if (loopback && !(role == ETH_SEG_MAC && is_active == UVM_ACTIVE))
       reason = "loopback requires role ETH_SEG_MAC and is_active UVM_ACTIVE";
+    else if (shm && !(role == ETH_SEG_MAC && is_active == UVM_ACTIVE))
+      reason = "shm requires role ETH_SEG_MAC and is_active UVM_ACTIVE";
+    else if (shm && loopback) reason = "loopback and shm are mutually exclusive";
     return reason == "";
   endfunction
 endclass

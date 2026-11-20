@@ -1,4 +1,5 @@
-// segmented agent：按 CLIENT/MAC 角色创建发送、接收和 ready 驱动，双向 monitor 始终存在；MAC active 另建 loopback。
+// segmented agent：按 CLIENT/MAC 角色创建发送、接收和 ready 驱动，双向 monitor 始终存在；MAC active 另建 loopback，
+// cfg.shm=1 时改建可选 eth_seg_shm_pkg 的 SHM 链路（按名字创建，基础包不依赖 shm_work）。
 // build 先按 agent 名经 aip_core 读 cfg；connect 时把 sequencer 发布到静态表（Tcl 按名字查找），final 时撤销；
 // passive 也创建仅供采样的 sequencer。
 class eth_seg_agent #(int RATE = 100) extends uvm_agent;
@@ -13,6 +14,7 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
   eth_seg_tx_monitor#(RATE) tx_monitor;
   eth_seg_rx_monitor#(RATE) rx_monitor;
   eth_seg_loopback#(RATE) loopback;
+  uvm_component shm_link; // cfg.shm=1 时的 eth_seg_shm_link_<RATE>，自行接 TX monitor、rx_driver 与 hub
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -49,13 +51,23 @@ class eth_seg_agent #(int RATE = 100) extends uvm_agent;
         ETH_SEG_MAC: begin
           rx_driver = eth_seg_rx_driver#(RATE)::type_id::create("rx_driver", this);
           ready_driver = eth_seg_ready_driver#(RATE)::type_id::create("ready_driver", this);
-          // loopback 常驻以支持中途开关，关闭时不占用 sequencer。
-          loopback = eth_seg_loopback#(RATE)::type_id::create("loopback", this);
           rx_driver.cfg = cfg;
           ready_driver.cfg = cfg;
-          loopback.cfg = cfg;
-          loopback.sequencer = sequencer;
-          loopback.param_path = get_full_name();
+          if (cfg.shm) begin
+            // 链路类型由 eth_seg_shm_pkg 按名字登记；未编译该包时明确报错，不退回 loopback。按名字创建用
+            // create_component_by_name（UVM 1.1d 与 1.2 都有；未登记时它先报 BDTYP 警告再返回 null）。
+            shm_link = uvm_factory::get().create_component_by_name($sformatf("eth_seg_shm_link_%0d", RATE),
+                                                                   get_full_name(), "shm_link", this);
+            if (shm_link == null)
+              `uvm_fatal("ETH_AGENT_SHM", {get_full_name(), ".shm=1 requires eth_seg_shm_pkg (compile eth_seg_agent_shm.f)"})
+          end
+          else begin
+            // loopback 常驻以支持中途开关，关闭时不占用 sequencer。
+            loopback = eth_seg_loopback#(RATE)::type_id::create("loopback", this);
+            loopback.cfg = cfg;
+            loopback.sequencer = sequencer;
+            loopback.param_path = get_full_name();
+          end
         end
         default: `uvm_fatal("ETH_AGENT_ROLE", "unsupported eth_seg_config.role")
       endcase
