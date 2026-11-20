@@ -40,7 +40,8 @@ $SHM_WORK_ROOT/shm_switch/aip/shm_aip_pkg.sv
 - VCS 的 `-F` 不改写 C 源文件路径，C 文件按绝对路径（`$SHM_WORK_ROOT`）给出。
 - endpoint 的 C 实现静态链接进 simv；也可以按 shm_work 的 `docs/simflow_cosim.md` 用 UCLI `loaddl`
   加载 `libshm_switch_dpi.so`，两种方式只能选一种。
-- AIP Tcl 需要 `-debug_access+all`（与本项目其它 AIP 测试相同），全局 `-timescale=1ns/1ps`。
+- AIP Tcl 需要 Tcl bridge 的读写/force 权限：本仓库测试用 `-debug_access+all`，rdma_work 的 DPU 示例用 `-debug_access+r+w+f`
+  也可以；全局 `-timescale=1ns/1ps`。UVM 1.2（本仓库 `-ntb_opts uvm-1.2`）与 UVM 1.1d（DPU 集成的 `-ntb_opts uvm`）都已验证。
 
 ## 2. 打开方式与参数
 
@@ -58,6 +59,9 @@ $SHM_WORK_ROOT/shm_switch/aip/shm_aip_pkg.sv
 | `shm_max_frame` | 2032 | 含 FCS 的最大帧长；须不超过 fabric `slot_size - 16`，大帧（如 RDMA MTU 4096）两者一起调大 |
 | `shm_tx_timeout_ms` | 1000 | fabric 满或对端暂停时，单帧发送重试的墙钟上限（每次重试睡 1ms），超时 fatal |
 | `shm_idle_sleep_us` | 0 | 接收空闲时每次轮询（仿真时间 100ns）在宿主侧休眠的微秒数，见第 4 节 |
+| `shm_wait_poll_ns` | 1 | 控制信号等待时每次轮询推进的仿真时间（ns），等待期间 endpoint 也按它轮询，见第 5 节 |
+| `shm_wait_sleep_us` | 1000 | 控制信号等待时每次轮询在宿主侧休眠的微秒数（< 1000000） |
+| `shm_wait_timeout_ms` | 600000 | `eth_shm_wait` 不给 `timeout_ms` 时的墙钟上限（ms） |
 
 传输参数全部由 SimFlow 按拓扑生成，不手写：`+SHM_ENABLE=1 +SHM_KEY +SHM_PORT_ID +SHM_DIRECTION
 +SHM_DST_PORT +SHM_EXPECT_PORT_MASK +SHM_READY_TIMEOUT_MS +SHM_TX_BINDINGS +SHM_RX_BINDING`。
@@ -83,8 +87,10 @@ $SHM_WORK_ROOT/shm_switch/aip/shm_aip_pkg.sv
   已上线路；RX 复位断言清解码队列并推进复位代次，owner 逐帧判旧，rx_driver 丢弃的在途帧计入 flushed。
   RX 复位期间 owner 等复位释放再驱动：两个进程没有时间同步，对端早到的帧不算复位期间的帧；复位持续而对端
   仍在发帧时帧在解码队列积压，超过 `shm_queue_depth` 即 fatal。仿真开始按复位处理，首个复位通知不算断言沿。
-- **统计**：report_phase 打印 `ETH_SHM: eth0: sent=… received=… driven=… flushed=… dropped=… tx_errors=… pending=…`；
-  shm_work 另打印 `SHM_ENDPOINT_COUNTERS` 与 `SHM_ADAPTER_STATS`。
+- **统计**：report_phase 打印 `ETH_SHM: eth0: sent=… received=… driven=… flushed=… dropped=… tx_errors=… pending=…
+  ctrl_sent=… ctrl_received=… ctrl_dropped=… ctrl_unclaimed=…`（后四项是第 5 节的控制信号，`ctrl_unclaimed` 列出结束时仍未被
+  `eth_shm_wait` 取走的信号名，没有时为 `none`）；shm_work 另打印 `SHM_ENDPOINT_COUNTERS` 与 `SHM_ADAPTER_STATS`，
+  其中的帧数含控制帧。
 
 ## 4. 就绪、超时与两个进程的时间
 
@@ -101,9 +107,42 @@ $SHM_WORK_ROOT/shm_switch/aip/shm_aip_pkg.sv
   （例如 20us 对 100ns 轮询，空闲时每毫秒墙钟最多推进约 5us 仿真时间）。两边仿真速度差太多时接收积压会
   增长，超过 `shm_queue_depth` 即 fatal。
 - **结束顺序**：先结束的节点会关掉自己的端口，之后再发给它的帧在 switch 计为丢包，发送方 fatal。
-  每个节点应在确认对端不会再发帧后才结束（例如收齐对端的帧，协议上不再有重传）。
+  每个节点应在确认对端不会再发帧后才结束（例如收齐对端的帧，协议上不再有重传）。最简单的做法是结束前互发一次
+  控制信号（第 5 节）：各自 `eth_shm_signal name=<自己>_done`，再 `eth_shm_wait name=<对端>_done`，然后 `end_test`。
 
-## 5. SimFlow 两节点示例
+## 5. 带内控制信号（两个仿真之间的握手）
+
+两个仿真之间没有别的通道。需要交换运行期才知道的内容（例如接收端建好 QP 后把 QPN、PSN、MAC/IP 告诉发送端），
+或约定“我已就绪 / 我已结束”时，用 SHM 链路上的控制信号：
+
+```tcl
+eth_shm_signal name=rx_ready data={qpn=0x10 psn=0x000100 dmac=0x020000000002}   ;# 本端发
+eth_shm_wait name=rx_ready timeout_ms=600000                                     ;# 对端等，结果 "OK: eth_shm_wait: <data>"
+```
+
+- **命令**：`eth_shm_signal name=<名字> [data=<文本>]` 成功返回 `OK: eth_shm_signal: <名字>`；`eth_shm_wait name=<名字>
+  [timeout_ms=<毫秒>]` 成功返回 `OK: eth_shm_wait: <数据>`（数据为空时冒号后为空），`timeout_ms` 缺省取
+  `<agent>.shm_wait_timeout_ms`。失败都返回非零 status 与 `ERROR: <命令>: <原因>`，例如
+  `ERROR: eth_shm_wait: no 'rx_ready' signal from the peer within 3000 ms (wall clock; local time advanced 2085 ns)`；
+  未知键、重复键、非法名字或超时值在执行前拒绝。没有 `shm=1` 的链路时两条命令都返回 ERROR。
+- **名字与数据**：名字 1..64 个字符，只含字母、数字与 `_ . : -`；数据至多 1000 个可打印 ASCII 字符（AIP 的命令
+  与结果各限 1024 字节）。数据含空格、逗号或等号时用花括号包住（`data={a=1 b=2,3}`），最外一层花括号不属于数据，
+  内部花括号须成对。
+- **语义**：信号按名字排队缓存，先到的（对端早于本端 `eth_shm_wait` 发出）不丢；同名多个按到达顺序各取一个。
+  `eth_shm_signal` 排在已交出的 DUT 帧之后（同一条 TX 队列，保序），等控制帧交到 switch 才返回。只收不发
+  （RX_ONLY）的节点不能 signal，只发不收（TX_ONLY）的节点不能 wait。
+- **时间**：`eth_shm_wait` 的上限是墙钟。等待期间每次轮询在宿主侧睡 `shm_wait_sleep_us`，仿真时间只推进
+  `shm_wait_poll_ns`（endpoint 在等待期间也按它轮询），所以等对端初始化几分钟，本端仿真时间也只走几百微秒；
+  轮询时报告 AIP 活动，命令看门狗不会把长等待当成死锁。超时、传输错误都返回 ERROR，不会挂起。
+- **线上格式**：控制帧是普通以太网帧，DA 全 1、SA `02:00:00:00:00:00`、EtherType `0x88B5`（IEEE 本地实验类型），载荷
+  依次为魔数 `ETHSHMC1`、名字长度（1B）、名字、数据长度（2B，大端）与数据，不足 60B 补零，带正确 FCS。对端链路在
+  endpoint 与 adapter 之间截下（EtherType 与魔数都匹配才算），不交 rx_driver、不进 DUT、RX monitor 看不到；EtherType
+  相同而魔数不同的帧照常是 DUT 帧。FCS 或长度错误的控制帧报 `ETH_SHM_CTRL`（UVM_ERROR）后丢弃；未取走的信号超过
+  `shm_queue_depth` 个即 fail closed。
+- **计数**：控制帧计入 endpoint 的收发帧数（`SHM_ENDPOINT_COUNTERS`、shm_work 的 `shm_transport` 检查器的期望须加上），
+  不计入 `sent/received/driven`；SV 中可读链路的 `ctrl_sent/ctrl_received/ctrl_dropped`。
+
+## 6. SimFlow 两节点示例
 
 两个节点互为 `to`，SimFlow 解析为两个 BIDIR 节点；节点 params 以 plusarg 传给各自仿真：
 
@@ -131,7 +170,7 @@ def_shm_cosim:
 帧长超过 2028B 时把 `slot_size` 和 `eth0.shm_max_frame` 一起调大（`shm_max_frame <= slot_size - 16`）。
 完整可运行的工程见 `test/shm/base.prj.yaml` 与 `test/shm/eth_shm_cases.yaml`。
 
-## 6. 验证
+## 7. 验证
 
 ```bash
 make shm-cosim-test AIP_CORE=/path/to/aip_core NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control \
@@ -139,8 +178,8 @@ make shm-cosim-test AIP_CORE=/path/to/aip_core NET_PACKET=/path/to/net_packet FL
 ```
 
 `AIP_CORE` 需已 `make -C dist libs`，`SHM_WORK` 需已构建 `shm_switch`，`SIMFLOW` 是包含 simflow 包的目录。
-脚本 `scripts/run_shm_cosim.py` 用 SimFlow 编译一次 `test/shm/tb_shm.sv`，再跑四个两节点用例（产物在
-`build/shm_cosim/sim/cosim/<用例>/<run-id>/`）：
+脚本 `scripts/run_shm_cosim.py` 用 SimFlow 编译一次 `test/shm/tb_shm.sv`，再跑六个两节点用例（产物在
+`build/shm_cosim/sim/cosim/<用例>/<run-id>/`），全部符合时打印 `ETH_SHM_COSIM_PASS green=2 red=4 config=3`：
 
 - `eth_shm_pair`（须通过）：每个节点一条 100G link，CLIENT 代替 DUT 发 TX，MAC 置 `shm=1`。dut_a 发 120 帧
   （不带 FCS），dut_b 发 60 帧（带 FCS，第 3 帧坏 FCS、第 7 帧 EOP error），帧长与内容由共享 seed、流编号
@@ -149,3 +188,10 @@ make shm-cosim-test AIP_CORE=/path/to/aip_core NET_PACKET=/path/to/net_packet FL
 - `eth_shm_pair_drop`、`eth_shm_pair_corrupt`（须失败）：dut_a 漏发第 5 帧、或把第 5 帧改一个字节，
   dut_b 在第 5 帧比对失败，SimFlow 判失败（先结束的 dut_b 关端口后 dut_a 的后续帧被丢，dut_a 也 fatal）。
 - `eth_shm_pair_overflow`（须失败）：dut_b 的 RX 只有 1/16 拍有效、`shm_queue_depth=8`，积压超限 fail closed。
+- `eth_shm_hs_pair`（须通过）：两节点各发 20 帧数据，同时节点 Tcl `test/shm/eth_shm_handshake.tcl` 经控制信号往返一次：
+  dut_a 先核对本地拒绝（缺名字、非法名字、未知键与重复键、非法超时、200ms 等不到），再发 early、empty（空数据）与
+  带数据的 hello；dut_b 等 hello、回 reply（回显数据），再取早已缓存的 early 与 empty；数据里的空格、逗号、等号与嵌套
+  花括号须原样到达；最后交换 done_a/done_b 再 end_test。两节点都须打印 `ETH_SHM_HS_PASS`，控制帧计入 endpoint 期望。
+- `eth_shm_hs_no_signal`（须失败）：dut_b 不发 hello，dut_a 的 `eth_shm_wait name=hello timeout_ms=3000` 在 3 秒墙钟后返回
+  ERROR（Tcl 打印 `ETH_SHM_HS_FAIL`，SimFlow 判失败），之后两端仍交换 done_a/done_b 再结束（否则无事可做的 dut_b 先结束、
+  关掉端口，dut_a 还在发的数据帧会被丢）；脚本另核对等待期间本端仿真时间推进不超过 100us（实测约 2us）。

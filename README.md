@@ -79,7 +79,9 @@ FCS 处理、复位与溢出语义见 [bind 集成说明](docs/integration/bind.
 的每帧经 SHM fabric 送到另一个仿真，对端的帧经自身 sequencer/rx_driver 回灌 RX，与 loopback 互斥。
 它是可选部分，需另外编译 add-on `eth_seg_agent_shm.f`（import 头 `eth_seg_agent_shm_import.svh`）与
 [shm_work](https://github.com/Beihang-yuting/shm_work)，节点、端口与就绪超时由 SimFlow 的 `def_shm_cosim` 给出。编译顺序、参数、错误帧与复位语义和两节点
-SimFlow 示例见 [SHM 联仿](docs/integration/shm.md)。
+SimFlow 示例见 [SHM 联仿](docs/integration/shm.md)。两个仿真之间还可经同一链路交换带内控制信号（Tcl
+`eth_shm_signal name=<名字> data={...}` / `eth_shm_wait name=<名字> timeout_ms=<墙钟毫秒>`），用于运行期握手与结束前
+互等，见该文档第 5 节。
 
 [AIP Tcl 示例](examples/aip/eth_seg_aip_pkg.sv) 使用 aip_core 的 `aip_cmd_seq`
 启动命名 sequencer，通过 `aip_int` 读取发包长度。
