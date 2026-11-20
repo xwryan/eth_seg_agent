@@ -22,6 +22,7 @@ make timing-test SEED=7
 make timing-checker-test
 make loopback-test SEED=7
 make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SEED=7
+make shm-cosim-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SHM_WORK=/path/to/shm_work SIMFLOW=/path/containing/simflow
 ```
 
 日志位于 `build/<RATE>/logs/`，`scripts/check_log.py` 检查 UVM summary 和非零错误计数。
@@ -36,6 +37,7 @@ make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow
 -F <ws>/net_packet/net_packet.f
 -F <ws>/eth_seg_agent/eth_seg_agent.f  // interface、types、package、checker、eth_net_packet_pkg、eth_flow_pkg
 -F <ws>/eth_seg_agent/eth_seg_agent_bind.f   // 可选 add-on：bind wrapper，bind 到已有 DUT 时才加
+-F <ws>/eth_seg_agent/eth_seg_agent_shm.f    // 可选 add-on：SHM 联仿 eth_seg_shm_pkg，前面另需 shm_work，见 docs/integration/shm.md
 ```
 
 `eth_seg_agent.f` 只编译根入口 `eth_seg_agent_pkg.sv`（按原顺序 include 上述源码）；在自己的 package/module 内写一行
@@ -72,6 +74,12 @@ MAC active agent 支持 loopback：TX monitor 采到的每帧经有界队列（`
 或坏 FCS 的 TX 帧照样原样回环，同时报 `ETH_LOOPBACK_TX_ERROR`（UVM_ERROR）；故意注错的测试用
 `'+uvm_set_severity=*,ETH_LOOPBACK_TX_ERROR,UVM_ERROR,UVM_WARNING'` 或 report catcher 降级。
 FCS 处理、复位与溢出语义见 [bind 集成说明](docs/integration/bind.md#5-loopback)。
+
+两个 DUT 仿真背靠背联仿（如在两个 DUT 之间验证 RDMA RC）时，MAC active agent 置 `+eth0.shm=1`：TX monitor
+的每帧经 SHM fabric 送到另一个仿真，对端的帧经自身 sequencer/rx_driver 回灌 RX，与 loopback 互斥。
+它是可选部分，需另外编译 add-on `eth_seg_agent_shm.f`（import 头 `eth_seg_agent_shm_import.svh`）与
+[shm_work](https://github.com/Beihang-yuting/shm_work)，节点、端口与就绪超时由 SimFlow 的 `def_shm_cosim` 给出。编译顺序、参数、错误帧与复位语义和两节点
+SimFlow 示例见 [SHM 联仿](docs/integration/shm.md)。
 
 [AIP Tcl 示例](examples/aip/eth_seg_aip_pkg.sv) 使用 aip_core 的 `aip_cmd_seq`
 启动命名 sequencer，通过 `aip_int` 读取发包长度。

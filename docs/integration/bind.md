@@ -112,7 +112,7 @@ aip_core 宏（`aip_int`/`aip_enum`），参数名即字段名，缺省取当前
 +eth0.ready_pattern=ETH_SEG_RANDOM +eth0.ready_high_pct=60 +eth0.loopback=1
 ```
 
-eth_rate_g/role/is_active 在 validate 和组件构建之前读取，此后不再读；其余字段同样只在 build 读一次，
+eth_rate_g/role/is_active/shm 在 validate 和组件构建之前读取，此后不再读；其余字段同样只在 build 读一次，
 运行中只有 loopback 按帧重读。Tcl bridge 在 run 阶段才工作，build 读参靠 plusarg（或 run_test 前
 在 SV 中调用 `aip_cmdline_override::set_val`）。每个读到的字段打印一行 `[aip_cmdline]`，
 `+aip_cmdline.print_enable=0` 可关闭。
@@ -214,6 +214,7 @@ rx_driver，store-and-forward 且保序。用于真实 DUT 的 VTX → DUT → E
   `loopback requires role ETH_SEG_MAC and is_active UVM_ACTIVE`。路径同 cfg 读参，按帧在 TX EOP 重读：
   `+eth0.loopback=1`；运行中 `set_param path=eth0.loopback value=0/1`。override 与 plusarg 都未给出时
   沿用当前值，也可直接改 `cfg.loopback`；`clear_param` 后保持最后读到的值。
+  与 SHM 联仿的 `cfg.shm` 互斥（[SHM 联仿](shm.md)），两者同时打开时 validate 报 `loopback and shm are mutually exclusive`。
 - 原样转换：从 DA 起复制字节，前导按两侧共用的 `preamble_passthrough` 去掉再补。TX 带 FCS（skip_crc=1，
   `fcs_present`）时，RX `include_fcs=1` 原样保留四字节（坏 CRC 也原样回去），否则剥离；TX 不带 FCS 时，RX
   `include_fcs=1` 由 codec 补正确 CRC。不翻转 CRC；`rx_fcs_error` 同接收端 MAC，只反映帧自带 FCS 的校验结果
