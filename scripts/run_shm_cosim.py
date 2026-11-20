@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """SHM 联仿回归：用 SimFlow 跑两个 eth_seg_agent 节点的背靠背 BIDIR cosim。
 
-先编译并跑通过用例 eth_shm_pair（两节点日志都须零 UVM_ERROR/FATAL 且有完成标记），
-再复用同一 simv 跑三个故障注入用例，要求 SimFlow 判失败且接收端日志出现对应诊断；
+先编译并跑通过用例 eth_shm_pair（两节点日志都须零 UVM_ERROR/FATAL 且有完成标记），再跑带内握手用例
+eth_shm_hs_pair（两节点另须打印 ETH_SHM_HS_PASS）；再复用同一 simv 跑四个预期失败的用例（三个故障注入与
+一个握手超时），要求 SimFlow 判失败且对应节点日志出现诊断，握手超时期间本端仿真时间只推进很少；
 最后不经 SimFlow 直接跑三次 simv，确认错误配置在构建期即 fail closed。
 环境变量：SIMFLOW_ROOT（含 simflow 包的目录）、SHM_WORK_ROOT、AIP_CORE_ROOT、NET_PACKET_ROOT、FLOW_CONTROL_ROOT、
 ETH_SHM_WORK（产物目录），可选 SHM_SWITCH_BIN（缺省 $SHM_WORK_ROOT/shm_switch/shm_switch）。
 """
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -16,11 +18,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "test" / "shm" / "base.prj.yaml"
 CHECK_LOG = ROOT / "scripts" / "check_log.py"
 MARKER = "ETH_SHM_COSIM_TEST_COMPLETE"
+HS_MARKER = "ETH_SHM_HS_PASS"
+HS_TIMEOUT = "ERROR: eth_shm_wait: no 'hello' signal from the peer within 3000 ms"
+# 握手超时期间本端仿真时间推进的上限（ns）：每次轮询只推进 shm_wait_poll_ns（缺省 1ns）。
+HS_MAX_ADVANCE_NS = 100000
 # 预期失败的用例：失败节点与其日志中必须出现的诊断。
 RED_CASES = (
     ("eth_shm_pair_drop", "dut_b", "peer frame #5"),
     ("eth_shm_pair_corrupt", "dut_b", "peer frame #5: byte 20"),
     ("eth_shm_pair_overflow", "dut_b", "decoded source FIFO is full"),
+    ("eth_shm_hs_no_signal", "dut_a", HS_TIMEOUT),
 )
 # 单进程错误配置：不启动 switch，agent/链路构建期即 fatal。
 CONFIG_CASES = (
@@ -100,6 +107,18 @@ def main():
         print(f"{node}: {summary[0].split(f'[{MARKER}] ', 1)[1]}")
     print(f"PASS eth_shm_pair: {run_dir}")
 
+    rc, run_dir, logs, console = run_case(env, simflow_root, work, "eth_shm_hs_pair", False)
+    if rc != 0:
+        raise SystemExit(f"eth_shm_hs_pair failed (rc={rc}); see {console} and {run_dir}")
+    for node in ("dut_a", "dut_b"):
+        log = node_log(logs, node)
+        subprocess.run([sys.executable, str(CHECK_LOG), str(log), "run", MARKER], check=True)
+        if not any(line.startswith(HS_MARKER + " ") for line in logs[log].splitlines()):
+            raise SystemExit(f"eth_shm_hs_pair: {node} log lacks {HS_MARKER}; see {log}")
+        summary = [line for line in logs[log].splitlines() if f"[{MARKER}]" in line]
+        print(f"{node}: {summary[0].split(f'[{MARKER}] ', 1)[1]}")
+    print(f"PASS eth_shm_hs_pair: {run_dir}")
+
     for case, node, expected in RED_CASES:
         rc, run_dir, logs, console = run_case(env, simflow_root, work, case, False)
         if rc == 0:
@@ -107,6 +126,12 @@ def main():
         text = logs[node_log(logs, node)]
         if expected not in text:
             raise SystemExit(f"{case}: {node} log lacks '{expected}'; see {run_dir}")
+        if expected == HS_TIMEOUT:
+            advanced = re.search(r"local time advanced (\d+) ns", text)
+            if advanced is None or int(advanced.group(1)) > HS_MAX_ADVANCE_NS:
+                raise SystemExit(f"{case}: local time advanced too far while waiting "
+                                 f"({advanced.group(1) if advanced else 'unknown'} ns > {HS_MAX_ADVANCE_NS}); see {run_dir}")
+            expected = f"{expected} (local time advanced {advanced.group(1)} ns)"
         print(f"PASS {case}: SimFlow rc={rc}, {node} reported '{expected}' ({run_dir})")
 
     simv = work / "sim" / "default" / "exec" / "simv"
@@ -120,7 +145,7 @@ def main():
         if not any(line.startswith("UVM_FATAL ") and expected in line for line in text.splitlines()):
             raise SystemExit(f"{' '.join(args)}: no UVM_FATAL '{expected}' in {log}")
         print(f"PASS config {' '.join(args)}: UVM_FATAL '{expected}' ({log})")
-    print(f"ETH_SHM_COSIM_PASS green=1 red={len(RED_CASES)} config={len(CONFIG_CASES)}")
+    print(f"ETH_SHM_COSIM_PASS green=2 red={len(RED_CASES)} config={len(CONFIG_CASES)}")
 
 
 if __name__ == "__main__":

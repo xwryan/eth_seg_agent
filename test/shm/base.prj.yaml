@@ -91,6 +91,7 @@ log_check:
     - "Error-"
     - "Fatal:"
     - "*** TEST FAILED ***"
+    - ETH_SHM_HS_FAIL
   run_success_keywords:
     - ETH_SHM_COSIM_TEST_COMPLETE
   max_error_lines: 20

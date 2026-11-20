@@ -15,6 +15,17 @@ def_tc:
       end_test wait_done=1 timeout=5ms strict=1
       run
 
+  # 带内握手：同一 tb，节点 Tcl 换成 eth_shm_handshake.tcl（按 shm_eth.self/hs 分角色，见脚本头）。
+  - name: eth_shm_hs_node
+    test: eth_seg_shm_test
+    seed: 1
+    params:
+      lb0_mac.shm: 1
+      lb0_mac.shm_idle_sleep_us: 20
+      shm_eth.seed: 20261120
+    tcl: |
+      source $::env(ETH_SEG_AGENT_ROOT)/test/shm/eth_shm_handshake.tcl
+
 def_shm_cosim:
   - name: eth_shm_pair
     fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
@@ -116,3 +127,59 @@ def_shm_cosim:
         lb0_mac.rx_valid_pattern: ETH_SEG_PERIODIC
         lb0_mac.rx_valid_high_cycles: 1
         lb0_mac.rx_valid_low_cycles: 15
+
+  # 带内握手（须通过）：两节点各发 20 帧数据，同时 Tcl 经控制通道往返一次，含先到先缓存、空数据、
+  # 数据里的空格/逗号/等号/嵌套花括号原样到达，最后 done 交换；控制帧计入 endpoint 期望（ctrl_tx/ctrl_rx）。
+  - name: eth_shm_hs_pair
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_hs_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 20
+        shm_eth.rx_frames: 20
+        shm_eth.hs: round_trip
+        shm_eth.ctrl_tx: 4
+        shm_eth.ctrl_rx: 2
+      dut_b:
+        tc: eth_shm_hs_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 20
+        shm_eth.rx_frames: 20
+        shm_eth.hs: round_trip
+        shm_eth.ctrl_tx: 2
+        shm_eth.ctrl_rx: 4
+
+  # 握手超时（预期失败）：dut_b 不发 hello，dut_a 的 eth_shm_wait 3s（墙钟）后返回 ERROR，Tcl 打印 ETH_SHM_HS_FAIL；
+  # 之后两端仍交换 done_a/done_b（各一个控制帧）再结束。
+  - name: eth_shm_hs_no_signal
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_hs_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 20
+        shm_eth.rx_frames: 20
+        shm_eth.hs: no_signal
+        shm_eth.ctrl_tx: 1
+        shm_eth.ctrl_rx: 1
+      dut_b:
+        tc: eth_shm_hs_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 20
+        shm_eth.rx_frames: 20
+        shm_eth.hs: no_signal
+        shm_eth.ctrl_tx: 1
+        shm_eth.ctrl_rx: 1

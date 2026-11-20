@@ -2,7 +2,8 @@
 // SHM fabric。两个节点由 SimFlow 的 BIDIR cosim 背靠背相连，按共享 seed 与流编号确定性生成帧，各自逐字节、按序核对
 // 收到的对端帧，并经 AIP end_test 等待 shm_transport（endpoint 计数与排空）和本地比对两个检查器。
 // 参数 +shm_eth.<名>（SimFlow 节点 params）：self/peer 流编号、tx_frames/rx_frames、seed；tx_errors/rx_errors 表示
-// 本端/对端第 3 帧坏 FCS、第 7 帧 EOP error；drop_index/corrupt_index 是发送端故障注入，只用于证明丢帧或改帧会失败。
+// 本端/对端第 3 帧坏 FCS、第 7 帧 EOP error；drop_index/corrupt_index 是发送端故障注入，只用于证明丢帧或改帧会失败；
+// ctrl_tx/ctrl_rx 是节点 Tcl（eth_shm_handshake.tcl）经控制通道发出/收下的信号数，计入 endpoint 收发期望并逐项核对。
 package eth_seg_shm_test_pkg;
   import uvm_pkg::*;
   import aip_core_pkg::*;
@@ -92,7 +93,7 @@ package eth_seg_shm_test_pkg;
     shm_tx_error_catcher tx_error_catcher;
     shm_transport_checker transport;
     shm_rx_checker rx_checker;
-    int unsigned self = 0, peer = 1, tx_frames = 0, rx_frames = 0, seed = 1;
+    int unsigned self = 0, peer = 1, tx_frames = 0, rx_frames = 0, seed = 1, ctrl_tx = 0, ctrl_rx = 0;
     bit tx_errors = 0, rx_errors = 0;
     int drop_index = -1, corrupt_index = -1;
     int unsigned expected_tx, checked, mismatches;
@@ -112,6 +113,8 @@ package eth_seg_shm_test_pkg;
       `aip_int("shm_eth", bit, rx_errors, rx_errors)
       `aip_int("shm_eth", int, drop_index, drop_index)
       `aip_int("shm_eth", int, corrupt_index, corrupt_index)
+      `aip_uint("shm_eth", int unsigned, ctrl_tx, ctrl_tx)
+      `aip_uint("shm_eth", int unsigned, ctrl_rx, ctrl_rx)
       lb0 = new("lb0", this);
       tx_error_catcher = new();
       uvm_report_cb::add(null, tx_error_catcher);
@@ -124,7 +127,8 @@ package eth_seg_shm_test_pkg;
       if (tx_errors && !lb0.client.cfg.include_fcs)
         `uvm_fatal("SHM_TEST", "tx_errors needs +lb0_client.include_fcs=1 for the bad-FCS frame")
       expected_tx = tx_frames - ((drop_index >= 0 && drop_index < tx_frames) ? 1 : 0);
-      transport = new(link.endpoint, null, expected_tx, rx_frames);
+      // endpoint 计数含控制帧：期望为数据帧加本节点 Tcl 发出/收下的控制信号。
+      transport = new(link.endpoint, null, expected_tx + ctrl_tx, rx_frames + ctrl_rx);
       rx_checker = new(this);
       aip_tcl_bridge::register_end_checker("shm_transport", transport);
       aip_tcl_bridge::register_end_checker("eth_shm_rx", rx_checker);
@@ -221,6 +225,9 @@ package eth_seg_shm_test_pkg;
         `uvm_error("SHM_TEST_LINK", $sformatf("link sent=%0d/%0d received=%0d driven=%0d/%0d flushed=%0d dropped=%0d tx_errors=%0d/%0d",
                    link.sent_frames, expected_tx, link.received_frames, link.driven_frames, rx_frames,
                    link.flushed_frames, link.dropped_frames, link.tx_errors, expected_errors))
+      if (link.ctrl_sent != ctrl_tx || link.ctrl_received != ctrl_rx || link.ctrl_dropped != 0 || link.unclaimed() != "")
+        `uvm_error("SHM_TEST_CTRL", $sformatf("control signals sent=%0d/%0d received=%0d/%0d dropped=%0d unclaimed='%s'",
+                   link.ctrl_sent, ctrl_tx, link.ctrl_received, ctrl_rx, link.ctrl_dropped, link.unclaimed()))
       if (tx_error_catcher.msgs.size() != expected_errors)
         `uvm_error("SHM_TEST_TX_ERROR", $sformatf("%0d ETH_SHM_TX_ERROR reports, expected %0d",
                    tx_error_catcher.msgs.size(), expected_errors))
@@ -233,9 +240,11 @@ package eth_seg_shm_test_pkg;
         `uvm_error("SHM_TEST_TX_ERROR", {"unexpected ETH_SHM_TX_ERROR text: ", tx_error_catcher.msgs[0], " | ",
                                          tx_error_catcher.msgs[1]})
       `uvm_info("ETH_SHM_COSIM_TEST_COMPLETE",
-                $sformatf("node=%0d sent=%0d received=%0d mismatches=%0d tx_errors=%0d endpoint tx=%0d rx=%0d full_retry=%0d paused_retry=%0d",
-                          self, link.sent_frames, checked, mismatches, link.tx_errors, link.endpoint.tx_frames,
-                          link.endpoint.rx_frames, link.endpoint.tx_full_retry, link.endpoint.tx_paused_retry), UVM_NONE)
+                $sformatf({"node=%0d sent=%0d received=%0d mismatches=%0d tx_errors=%0d ctrl_sent=%0d ctrl_received=%0d ",
+                           "endpoint tx=%0d rx=%0d full_retry=%0d paused_retry=%0d"},
+                          self, link.sent_frames, checked, mismatches, link.tx_errors, link.ctrl_sent, link.ctrl_received,
+                          link.endpoint.tx_frames, link.endpoint.rx_frames, link.endpoint.tx_full_retry,
+                          link.endpoint.tx_paused_retry), UVM_NONE)
     endfunction
 
     // SimFlow 的日志检查以此为结束标记，只检查标记之前的内容（之后是 UVM 汇总）。
