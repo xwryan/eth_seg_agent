@@ -1,0 +1,104 @@
+# SimFlow 工程：两个 eth_seg_agent 仿真经 SHM 联仿背靠背（用例见 eth_shm_cases.yaml）。
+# 需要的环境变量：ETH_SEG_AGENT_ROOT、AIP_CORE_ROOT（已 make -C dist libs）、NET_PACKET_ROOT、FLOW_CONTROL_ROOT、
+# SHM_WORK_ROOT（已 make shm_switch）、SHM_SWITCH_BIN、ETH_SHM_WORK（仿真产物与 history 目录）。由 scripts/run_shm_cosim.py 设置。
+project:
+  name: eth_seg_agent_shm_cosim
+  top: tb_shm
+  uvm: "1.2"
+
+paths:
+  sim_root: "${sim}"
+
+params:
+  sim: "${env.ETH_SHM_WORK}/sim"
+  tc(-tc): eth_shm_pair
+  seed(-s): 1
+  pl(-pl): UVM_LOW
+  mode(-m): default
+  wave(-w): false
+  cov(-c): false
+  log_check: "on"
+  log_check_detail: "on"
+
+compile:
+  style:
+    enable: false
+    param: mode
+    modes:
+      default:
+        adds: []
+  base:
+    - vcs
+    - -full64
+    - -sverilog
+    - -ntb_opts uvm-1.2
+    - -timescale=1ns/1ps
+    - -debug_access+all
+    - -top tb_shm
+    - -Mdir=${sim}/${style}/exec/csrc
+    - -o ${sim}/${style}/exec/simv
+    - -l ${sim}/${style}/log/cmp.log
+    # endpoint 的 C 实现静态链接进 simv（二选一的另一种是 UCLI loaddl libshm_switch_dpi.so）。
+    - -CFLAGS -DDPI_MODE
+  # 每个项目一行大写 -F，按 README 的依赖顺序（aip_core、flow_control、net_packet、eth_seg_agent 与 bind add-on）；
+  # shm_work 用其自带的 shm_base.f（内部路径经 SHM_WORK_ROOT），再单列 shm_aip_pkg.sv，最后是 add-on eth_seg_agent_shm.f。
+  sources:
+    - "-F ${env.AIP_CORE_ROOT}/aip_core.f"
+    - "-F ${env.FLOW_CONTROL_ROOT}/flow_control.f"
+    - "-F ${env.NET_PACKET_ROOT}/net_packet.f"
+    - "-F ${env.ETH_SEG_AGENT_ROOT}/eth_seg_agent.f"
+    - "-F ${env.ETH_SEG_AGENT_ROOT}/eth_seg_agent_bind.f"
+    - "-f ${env.SHM_WORK_ROOT}/shm_switch/files/shm_base.f"
+    - "${env.SHM_WORK_ROOT}/shm_switch/aip/shm_aip_pkg.sv"
+    - "-F ${env.ETH_SEG_AGENT_ROOT}/eth_seg_agent_shm.f"
+    - "${env.SHM_WORK_ROOT}/shm_switch/shm_switch_core.c"
+    - "${env.SHM_WORK_ROOT}/shm_switch/shm_switch_port.c"
+    - "${env.ETH_SEG_AGENT_ROOT}/test/loopback/eth_loopback_link.sv"
+    - "${env.ETH_SEG_AGENT_ROOT}/test/loopback/eth_seg_loopback_test_pkg.sv"
+    - "${env.ETH_SEG_AGENT_ROOT}/test/shm/eth_seg_shm_test_pkg.sv"
+    - "${env.ETH_SEG_AGENT_ROOT}/test/shm/tb_shm.sv"
+
+run:
+  include:
+    - "${env.ETH_SEG_AGENT_ROOT}/test/shm"
+  base:
+    - "${sim}/${style}/exec/simv"
+    - +UVM_VERBOSITY=${pl}
+    - +UVM_NO_RELNOTES
+
+tools:
+  aip_core_path: "${env.AIP_CORE_ROOT}"
+
+file_templates:
+  cmp_log_file: "${sim}/${style}/log/cmp.log"
+  log_file: "${artifact_root}/log/${tc}_${seed}.log"
+  wave_file: "${artifact_root}/wave/${tc}_${seed}.fsdb"
+  cov_file: "${artifact_root}/cov/${tc}_${seed}.db"
+  tcl_file: "${artifact_root}/tcl/${tc}_${seed}.tcl"
+
+# 只检查测试在 report_phase 打出的结束标记之前的内容（之后的 UVM 汇总含 "UVM_ERROR :    0" 等字样）。
+log_check:
+  log_end_marker: "*** TEST PASSED ***"
+  compile_failure_keywords:
+    - "Error-"
+    - "Fatal:"
+    - "undefined reference"
+    - "syntax error"
+  run_failure_keywords:
+    - UVM_ERROR
+    - UVM_FATAL
+    - "[ERROR]"
+    - "Error-"
+    - "Fatal:"
+    - "*** TEST FAILED ***"
+  run_success_keywords:
+    - ETH_SHM_COSIM_TEST_COMPLETE
+  max_error_lines: 20
+  auto_check:
+    compile: true
+    run: true
+    timeout: 60
+
+tracker:
+  history_dir: "${env.ETH_SHM_WORK}/.pvcs_history"
+  max_records: 100

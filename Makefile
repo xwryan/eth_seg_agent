@@ -191,6 +191,21 @@ loopback-aip-run:
 	AIP_CORE="$(AIP_CORE_ROOT)" $(SIMV) +ntb_random_seed=$(SEED) -ucli -do $(abspath test/loopback/loopback.tcl) -no_save -exitstatus -l $(BUILD)/logs/loopback_aip_test.log < /dev/null
 	python3 scripts/check_log.py $(BUILD)/logs/loopback_aip_test.log run ETH_LOOPBACK_AIP_TEST_COMPLETE
 
+# SHM 联仿（可选）：SimFlow 编译 test/shm 后跑两个 eth_seg_agent 节点的背靠背用例，1 个须通过、3 个故障注入须失败。
+# SHM_WORK 指向已构建 shm_switch 的 shm_work，SIMFLOW 指向包含 simflow 包的目录；AIP_CORE 需已 make -C dist libs，
+# NET_PACKET、FLOW_CONTROL 与其它目标相同。
+SHM_WORK ?= $(SHM_WORK_ROOT)
+SIMFLOW ?= $(SIMFLOW_ROOT)
+
+.PHONY: shm-cosim-test
+shm-cosim-test:
+	$(CHECK_AIP)
+	test -n "$(SHM_WORK)" && test -f "$(SHM_WORK)/shm_switch/files/shm_base.f" && test -x "$(SHM_WORK)/shm_switch/shm_switch"
+	test -n "$(SIMFLOW)" && test -f "$(SIMFLOW)/simflow/__init__.py"
+	mkdir -p build/shm_cosim
+	SHM_WORK_ROOT="$(abspath $(SHM_WORK))" SIMFLOW_ROOT="$(abspath $(SIMFLOW))" ETH_SHM_WORK="$(abspath build/shm_cosim)" \
+		python3 scripts/run_shm_cosim.py
+
 # 递归 make 覆盖 BUILD，避免 bind 和原 smoke 的编译缓存或 simv 相互覆盖。
 bind-test:
 	$(MAKE) --no-print-directory bind-run BUILD=build/bind

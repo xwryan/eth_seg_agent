@@ -1,0 +1,118 @@
+# 两个 eth_seg_agent 节点背靠背：dut_a 与 dut_b 互为 to，SimFlow 解析为两个 BIDIR 节点。
+# 每个节点一份 tb_shm：lb0_client 代替 DUT 发 TX，lb0_mac 置 shm=1 接入 SHM；+shm_eth.* 是测试参数。
+# dut_a 发 120 帧（不带 FCS），dut_b 发 60 帧（带 FCS，第 3 帧坏 FCS、第 7 帧 EOP error），各自逐字节核对对端帧。
+def_tc:
+  - name: eth_shm_node
+    test: eth_seg_shm_test
+    seed: 1
+    params:
+      lb0_mac.shm: 1
+      # 空闲轮询每次在宿主侧睡 20us：等对端时本端仿真时间不会跑得太快，Tcl 的仿真时间超时按墙钟也够用。
+      lb0_mac.shm_idle_sleep_us: 20
+      shm_eth.seed: 20261120
+    tcl: |
+      set ::aip_ack_timeout_ns 50000000
+      end_test wait_done=1 timeout=5ms strict=1
+      run
+
+def_shm_cosim:
+  - name: eth_shm_pair
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 120
+        shm_eth.rx_frames: 60
+        shm_eth.rx_errors: 1
+      dut_b:
+        tc: eth_shm_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 60
+        shm_eth.rx_frames: 120
+        shm_eth.tx_errors: 1
+        lb0_client.include_fcs: 1
+        lb0_mac.include_fcs: 1
+
+  # 故障注入（预期失败）：dut_a 不发第 5 帧，dut_b 在第 5 帧比对失败。
+  - name: eth_shm_pair_drop
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 120
+        shm_eth.rx_frames: 60
+        shm_eth.rx_errors: 1
+        shm_eth.drop_index: 5
+      dut_b:
+        tc: eth_shm_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 60
+        shm_eth.rx_frames: 120
+        shm_eth.tx_errors: 1
+        lb0_client.include_fcs: 1
+        lb0_mac.include_fcs: 1
+
+  # 故障注入（预期失败）：dut_a 第 5 帧改一个字节，dut_b 逐字节比对失败。
+  - name: eth_shm_pair_corrupt
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 120
+        shm_eth.rx_frames: 60
+        shm_eth.rx_errors: 1
+        shm_eth.corrupt_index: 5
+      dut_b:
+        tc: eth_shm_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 60
+        shm_eth.rx_frames: 120
+        shm_eth.tx_errors: 1
+        lb0_client.include_fcs: 1
+        lb0_mac.include_fcs: 1
+
+  # 有界队列（预期失败）：dut_b 的 RX 只有 1/16 拍有效、队列深度 8，积压超限即 fail closed。
+  - name: eth_shm_pair_overflow
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.tx_frames: 120
+        shm_eth.rx_frames: 60
+      dut_b:
+        tc: eth_shm_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.tx_frames: 60
+        shm_eth.rx_frames: 120
+        lb0_mac.shm_queue_depth: 8
+        lb0_mac.rx_valid_pattern: ETH_SEG_PERIODIC
+        lb0_mac.rx_valid_high_cycles: 1
+        lb0_mac.rx_valid_low_cycles: 15
