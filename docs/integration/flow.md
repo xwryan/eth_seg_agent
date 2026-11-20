@@ -11,15 +11,15 @@
 可选流控目标的依赖检查。流控类型统一属于 `flow_control_pkg`，本项目通过
 `import flow_control_pkg::*;` 使用，不在 `eth_flow_pkg` 中重新 include 模型。
 
-各仓库的 filelist 依赖在前、按以下顺序组合（`*_ROOT` 指向各自仓库根目录）：
+`eth_flow_pkg` 已随 `eth_seg_agent.f` 编译（原 `eth_seg_agent_flow.f` 已并入并删除）。各仓库的主 filelist 每个一行大写 `-F`，
+依赖在前（filelist 内路径相对各自目录）：
 
 ```text
--f $AIP_CORE_ROOT/aip_core.f -f $NET_PACKET_ROOT/net_packet.f -f $FLOW_CONTROL_ROOT/flow_control.f
--f $ETH_SEG_AGENT_ROOT/eth_seg_agent.f -f $ETH_SEG_AGENT_ROOT/eth_seg_agent_net_packet.f
--f $ETH_SEG_AGENT_ROOT/eth_seg_agent_flow.f
+-F <ws>/aip_core/aip_core.f -F <ws>/flow_control/flow_control.f -F <ws>/net_packet/net_packet.f
+-F <ws>/eth_seg_agent/eth_seg_agent.f
 ```
 
-`flow_control.f` 只编译一次 `flow_control_pkg.sv`，不要再混用组件的直接 include。
+`flow_control.f` 只编译一次 flow_control 的 package，不要再混用组件的直接 include。
 RM/SCB 等其它 package 如需流控模型，也直接 import `flow_control_pkg`，这样共享的是
 同一套类/枚举类型。`eth_flow_pkg` 只提供 Ethernet 适配序列，不重新导出流控类型。
 

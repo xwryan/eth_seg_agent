@@ -124,7 +124,7 @@ bind 的 time-zero 创建方式仍为 `#0; run_test()`。
 
 ## 编译和验证
 
-依次加入 `aip_core.f`、`net_packet.f`、`eth_seg_agent.f`、`eth_seg_agent_net_packet.f`，
+每个项目一行大写 `-F`，依次加入 `aip_core.f`、`flow_control.f`、`net_packet.f`、`eth_seg_agent.f`（已含 `eth_net_packet_pkg`），
 再编译示例 package 和用户环境。采样组件本身不调用 AIP（基础 VIP 的 cfg 读参才需要 aip_core）；
 不用 net_packet 时，也可直接调用 `eth_seg_sequencer` 的三个同名采样接口。
 

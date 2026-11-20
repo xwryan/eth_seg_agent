@@ -12,13 +12,14 @@ eth_seg_seq_item.frame_bytes
 ```
 
 适配类型位于 `eth_net_packet_pkg`，实现文件为 `seq_lib/eth_base_seq.sv`。
-原有 `eth_seg_base_seq` / `eth_seg_frame_seq` 继续提供基础字节刺激；基础 VIP 前置 aip_core（cfg 读参），
-不依赖 `net_packet`，只有使用网络报文适配时才编译额外 package。
+原有 `eth_seg_base_seq` / `eth_seg_frame_seq` 继续提供基础字节刺激，这两个类本身不使用 `net_packet`；
+但 `eth_seg_agent.f` 同时编译 `eth_net_packet_pkg`（原 `eth_seg_agent_net_packet.f` 已并入并删除），所以它的前置是
+aip_core、flow_control、net_packet。
 
 ## 编译与依赖
 
 依赖 net_packet 与 aip_core（基础 VIP 已需要 aip_core，可选 Tcl 接入也直接使用它），分别经各自的
-`net_packet.f`、`aip_core.f` 编译，路径由 `NET_PACKET_ROOT`、`AIP_CORE_ROOT` 指定。
+`net_packet.f`、`aip_core.f` 以大写 `-F` 编译（filelist 内路径相对各自目录）。
 
 使用 net_packet 自己的 `net_packet.f`（统一 package 入口）。不要再将
 `core/packet.sv` 等组件 include 到另一个 package 或 `$unit`，否则会产生不兼容的
@@ -27,15 +28,15 @@ eth_seg_seq_item.frame_bytes
 基本编译顺序如下（VCS 使用 -ntb_opts uvm-1.2）：
 
 ```text
--f $AIP_CORE_ROOT/aip_core.f
--f $NET_PACKET_ROOT/net_packet.f
--f $ETH_SEG_AGENT_ROOT/eth_seg_agent.f
--f $ETH_SEG_AGENT_ROOT/eth_seg_agent_net_packet.f
-用户 test/sequence package
+-F <ws>/aip_core/aip_core.f
+-F <ws>/flow_control/flow_control.f
+-F <ws>/net_packet/net_packet.f
+-F <ws>/eth_seg_agent/eth_seg_agent.f
+用户 test/sequence package（内部 `include "eth_seg_agent_import.svh"）
 ```
 
 不单独编译 `seq_lib/eth_base_seq.sv`，它由 `eth_net_packet_pkg` include。
-若使用 AIP 示例，再依次加入 `flow_control.f`、`eth_seg_agent_flow.f`、`eth_seg_agent_bind.f`
+若使用 AIP 示例，再加入 add-on `eth_seg_agent_bind.f`
 和 `examples/aip/eth_net_packet_aip_pkg.sv`。该 AIP 示例额外依赖 flow_control 的公共
 package，线速参数见 [线速发送集成](flow.md)。
 

@@ -175,8 +175,9 @@ base test 不需要 env，也不创建 agent；在 `run_phase` 持有 objection 
 
 ## 4. 编译与验证
 
-普通 VIP 依次加入 aip_core 的 `aip_core.f`、`eth_seg_agent.f`（interface → types → package → checker）、
-`eth_seg_agent_bind.f`（wrapper），最后是 testbench；aip_core 需 `-timescale=1ns/1ps`，cfg 读参直接调用其宏。
+普通 VIP 每个项目一行大写 `-F`，依次加入 `aip_core.f`、`flow_control.f`、`net_packet.f`、`eth_seg_agent.f`
+（interface → types → package → checker → net_packet/flow 序列包）、add-on `eth_seg_agent_bind.f`（wrapper），
+最后是 testbench；aip_core 需 `-timescale=1ns/1ps`，cfg 读参直接调用其宏。
 使用 Tcl 示例时再编译示例 package。
 
 载入 VCS 环境后运行：
@@ -189,7 +190,7 @@ make loopback-test SEED=7
 make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow_control SEED=7
 ```
 
-AIP 示例和测试使用 `AIP_CORE` 指向的 aip_core（经其 `aip_core.f` 编译，Tcl 端加载其 `dist/aip_init.tcl`）。
+AIP 示例和测试使用 `AIP_CORE` 指向的 aip_core（经其 `aip_core.f` 以 `-F` 编译，Tcl 端加载其 `dist/aip_init.tcl`）。
 不自动下载、修改或提交外部依赖。完整 Tcl 用例见 `test/aip/send.tcl`。
 
 bind 用例覆盖四个 IP（三种速率）、同速率多实例静态 sqr 隔离、默认 cfg、用户改 cfg、

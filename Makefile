@@ -7,7 +7,8 @@ SEED ?= 1
 BUILD ?= build/$(RATE)
 SIMV := $(BUILD)/simv
 UVM_HOME ?= $(VCS_HOME)/etc/uvm-1.2
-# aip_core 是全部目标的前置（cfg 用 aip_core 宏读参）；net_packet/flow_control 只用于相应的可选目标。各仓库 filelist 用 *_ROOT 定位。
+# aip_core、flow_control、net_packet 是全部目标的前置：cfg 用 aip_core 宏读参，eth_seg_agent.f 含 net_packet 报文序列与 flow 线速序列。
+# 各仓库用 *_ROOT 定位；filelist 内部路径相对各自目录（大写 -F）。
 AIP_CORE ?= $(AIP_CORE_ROOT)
 NET_PACKET ?= $(NET_PACKET_ROOT)
 FLOW_CONTROL ?= $(FLOW_CONTROL_ROOT)
@@ -18,29 +19,28 @@ export ETH_SEG_AGENT_ROOT := $(CURDIR)
 FLOW_CLOCK_HZ ?= 415039062.5
 INC := +incdir+test +incdir+$(UVM_HOME)/src
 VCSFLAGS := -full64 -sverilog -ntb_opts uvm-1.2 -timescale=1ns/1ps -Mdir=$(BUILD)/csrc -o $(SIMV) +define+ETH_SEG_BUILD_RATE=$(RATE) $(INC)
-# 依赖 filelist 在前（aip_core.f 最先且只编译一次），本工程 eth_seg_agent.f 及可选部分在后，最后是测试/示例源码。
-AIP_F := -f $(AIP_CORE_ROOT)/aip_core.f
-ETH_F := -f $(ETH_SEG_AGENT_ROOT)/eth_seg_agent.f
-BIND_F := -f $(ETH_SEG_AGENT_ROOT)/eth_seg_agent_bind.f
-NET_F := $(AIP_F) -f $(NET_PACKET_ROOT)/net_packet.f $(ETH_F) \
-         -f $(ETH_SEG_AGENT_ROOT)/eth_seg_agent_net_packet.f
-FLOW_F := $(AIP_F) -f $(NET_PACKET_ROOT)/net_packet.f -f $(FLOW_CONTROL_ROOT)/flow_control.f \
-          $(ETH_F) -f $(ETH_SEG_AGENT_ROOT)/eth_seg_agent_net_packet.f -f $(ETH_SEG_AGENT_ROOT)/eth_seg_agent_flow.f
-SRC := $(AIP_F) $(ETH_F) test/tb_top.sv test/eth_seg_smoke_test.sv
-BIND_SRC := $(AIP_F) $(ETH_F) $(BIND_F) test/bind/eth_seg_bind_test_pkg.sv test/bind/tb_bind.sv
-AIP_SRC := $(AIP_F) $(ETH_F) $(BIND_F) \
+# 每个项目一行大写 -F：依赖在前（aip_core.f 最先且只编译一次），本工程主 filelist eth_seg_agent.f（含 net_packet 报文序列与
+# flow 线速序列）在后，可选 add-on eth_seg_agent_bind.f 只给 bind 的目标，最后是测试/示例源码。
+ETH_F := -F $(AIP_CORE_ROOT)/aip_core.f -F $(FLOW_CONTROL_ROOT)/flow_control.f -F $(NET_PACKET_ROOT)/net_packet.f \
+         -F $(ETH_SEG_AGENT_ROOT)/eth_seg_agent.f
+BIND_F := -F $(ETH_SEG_AGENT_ROOT)/eth_seg_agent_bind.f
+SRC := $(ETH_F) test/tb_top.sv test/eth_seg_smoke_test.sv
+BIND_SRC := $(ETH_F) $(BIND_F) test/bind/eth_seg_bind_test_pkg.sv test/bind/tb_bind.sv
+AIP_SRC := $(ETH_F) $(BIND_F) \
            examples/aip/eth_seg_aip_pkg.sv test/aip/eth_seg_aip_test_pkg.sv test/aip/tb_aip.sv
-NET_TEST_SRC := $(NET_F) test/net_packet/eth_net_packet_test_pkg.sv test/net_packet/tb_net_packet.sv
-FLOW_TEST_SRC := $(FLOW_F) test/net_packet/eth_net_packet_test_pkg.sv \
+NET_TEST_SRC := $(ETH_F) test/net_packet/eth_net_packet_test_pkg.sv test/net_packet/tb_net_packet.sv
+FLOW_TEST_SRC := $(ETH_F) test/net_packet/eth_net_packet_test_pkg.sv \
                  test/flow/eth_flow_test_pkg.sv test/flow/tb_flow.sv
-NET_AIP_SRC := $(FLOW_F) $(BIND_F) \
+NET_AIP_SRC := $(ETH_F) $(BIND_F) \
                examples/aip/eth_net_packet_aip_pkg.sv test/net_packet/eth_net_packet_test_pkg.sv \
                test/net_packet/eth_net_packet_aip_test_pkg.sv test/net_packet/tb_net_packet_aip.sv
-TIMING_SRC := $(AIP_F) $(ETH_F) test/timing/eth_timing_control.sv \
+TIMING_SRC := $(ETH_F) test/timing/eth_timing_control.sv \
               test/timing/eth_timing_test_pkg.sv test/timing/tb_timing.sv
 SCENARIO ?= all
-# 每个目标先确认 aip_core filelist 存在。
-CHECK_AIP := test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core.f"
+# 每个目标先确认三个前置项目的主 filelist 存在（eth_seg_agent.f 需要 flow_control 与 net_packet）。
+CHECK_AIP := test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core.f" && \
+	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/net_packet.f" && \
+	test -n "$(FLOW_CONTROL)" && test -f "$(FLOW_CONTROL)/flow_control.f"
 
 .PHONY: flow-test flow-run
 flow-test:
@@ -56,8 +56,8 @@ flow-run:
 	$(SIMV) +ntb_random_seed=$(SEED) +FLOW_CLOCK_HZ=$(FLOW_CLOCK_HZ) -l $(BUILD)/logs/flow_test.log
 	python3 scripts/check_log.py $(BUILD)/logs/flow_test.log run ETH_FLOW_TEST_COMPLETE
 
-# hub 契约测试不依赖 net_packet。
-HUB_SRC := $(AIP_F) $(ETH_F) test/sampling/eth_seg_hub_test_pkg.sv test/sampling/tb_hub.sv
+# hub 契约测试只用 eth_seg_agent 的采样接口（编译仍需 eth_seg_agent.f 的全部前置）。
+HUB_SRC := $(ETH_F) test/sampling/eth_seg_hub_test_pkg.sv test/sampling/tb_hub.sv
 
 .PHONY: hub-test hub-run
 hub-test:
@@ -73,7 +73,7 @@ hub-run:
 
 
 # RM/SCB 示例需要 net_packet；复位控制接口只属于测试。
-SAMPLING_SRC := $(NET_F) \
+SAMPLING_SRC := $(ETH_F) \
                 test/sampling/eth_sampling_control.sv examples/sampling/eth_rm_scb_example_pkg.sv \
                 test/sampling/eth_rm_scb_test_pkg.sv test/sampling/tb_rm_scb.sv
 
@@ -82,8 +82,7 @@ sampling-test:
 	$(MAKE) --no-print-directory sampling-run BUILD=build/sampling
 
 sampling-run:
-	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core.f"
-	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/net_packet.f"
+	$(CHECK_AIP)
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
 	$(VCS) $(VCSFLAGS) -top tb_rm_scb $(SAMPLING_SRC) -l $(BUILD)/logs/compile.log
 	python3 scripts/check_log.py $(BUILD)/logs/compile.log compile
@@ -97,11 +96,11 @@ sampling-run:
 timing-checker-test:
 	$(MAKE) --no-print-directory timing-checker-run BUILD=build/timing_checker
 
-# 非法 X/Z 用例按精确诊断判通过，不能套用普通测试的零 error 规则。checker 随 eth_seg_agent.f 编译，故需 UVM 与 aip_core。
+# 非法 X/Z 用例按精确诊断判通过，不能套用普通测试的零 error 规则。checker 随 eth_seg_agent.f 编译，故需 UVM 与其全部前置。
 timing-checker-run:
 	$(CHECK_AIP)
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
-	$(VCS) -full64 -sverilog -ntb_opts uvm-1.2 -timescale=1ns/1ps -top tb_timing_checker -Mdir=$(BUILD)/csrc -o $(SIMV) $(AIP_F) $(ETH_F) test/timing/tb_timing_checker.sv -l $(BUILD)/logs/compile.log
+	$(VCS) -full64 -sverilog -ntb_opts uvm-1.2 -timescale=1ns/1ps -top tb_timing_checker -Mdir=$(BUILD)/csrc -o $(SIMV) $(ETH_F) test/timing/tb_timing_checker.sv -l $(BUILD)/logs/compile.log
 	python3 scripts/check_log.py $(BUILD)/logs/compile.log compile
 	@for scenario in rx_invalid rx_z rx_dontcare rx_eop_x rx_data_x tx_dontcare tx_data_x; do \
 		$(SIMV) +CASE=$$scenario -l $(BUILD)/logs/$$scenario.log; \
@@ -123,10 +122,9 @@ timing-run:
 net-packet-test:
 	$(MAKE) --no-print-directory net-packet-run BUILD=build/net_packet
 
-# net_packet 经其 net_packet.f 以 package 编译，测试只 import net_packet_pkg。
+# net_packet 经其 net_packet.f 以 package 编译（eth_seg_agent.f 的前置），测试只 import net_packet_pkg。
 net-packet-run:
-	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core.f"
-	test -n "$(NET_PACKET)" && test -f "$(NET_PACKET)/net_packet.f"
+	$(CHECK_AIP)
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
 	$(VCS) $(VCSFLAGS) -top tb_net_packet $(NET_TEST_SRC) -l $(BUILD)/logs/compile.log
 	python3 scripts/check_log.py $(BUILD)/logs/compile.log compile
@@ -151,7 +149,7 @@ aip-test:
 
 # AIP_CORE 指向 aip_core 源码；不会自动下载或修改用户的 AIP 仓库。
 aip-run:
-	test -n "$(AIP_CORE)" && test -f "$(AIP_CORE)/aip_core.f"
+	$(CHECK_AIP)
 	mkdir -p $(BUILD)/logs $(BUILD)/csrc
 	$(VCS) $(VCSFLAGS) -debug_access+all -top tb_aip $(AIP_SRC) -l $(BUILD)/logs/compile.log
 	python3 scripts/check_log.py $(BUILD)/logs/compile.log compile
@@ -159,9 +157,9 @@ aip-run:
 	python3 scripts/check_log.py $(BUILD)/logs/aip_test.log run ETH_AIP_TEST_COMPLETE
 
 # loopback：CLIENT 代替 DUT 发 TX，MAC 开 loopback 回灌 RX；plusarg 同时覆盖读参开关、构建期枚举与 build 拒绝。
-LOOPBACK_SRC := $(AIP_F) $(ETH_F) $(BIND_F) test/loopback/eth_loopback_link.sv \
+LOOPBACK_SRC := $(ETH_F) $(BIND_F) test/loopback/eth_loopback_link.sv \
                 test/loopback/eth_seg_loopback_test_pkg.sv test/loopback/tb_loopback.sv
-LOOPBACK_AIP_SRC := $(FLOW_F) $(BIND_F) examples/aip/eth_seg_aip_pkg.sv examples/aip/eth_net_packet_aip_pkg.sv \
+LOOPBACK_AIP_SRC := $(ETH_F) $(BIND_F) examples/aip/eth_seg_aip_pkg.sv examples/aip/eth_net_packet_aip_pkg.sv \
                     test/loopback/eth_loopback_link.sv test/loopback/eth_seg_loopback_test_pkg.sv \
                     test/loopback/eth_seg_loopback_aip_test_pkg.sv test/loopback/tb_loopback_aip.sv
 LOOPBACK_ARGS := +lbp_mac.loopback=1 +lbo_mac.loopback=1 +lbo_mac.max_pending=3 \

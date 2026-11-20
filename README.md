@@ -10,7 +10,8 @@
 携带 FCS，`inject_fcs_error` 只在 FCS 开启时翻转 CRC；驱动 `item_done` 仅表示已复制入队，
 物理完成须核对 `sent_ap`/monitor 的预期数量及 scoreboard 排空，不能仅凭 `is_idle()` 判定。
 
-载入 VCS（UVM 1.2）与 license 环境后运行（全部目标都需 aip_core，`AIP_CORE` 缺省取 `AIP_CORE_ROOT`）：
+载入 VCS（UVM 1.2）与 license 环境后运行（全部目标都需 aip_core、net_packet、flow_control，`AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL`
+缺省取对应的 `*_ROOT`）：
 
 ```text
 make compile RATE=100
@@ -26,11 +27,22 @@ make loopback-aip-test NET_PACKET=/path/to/net_packet FLOW_CONTROL=/path/to/flow
 日志位于 `build/<RATE>/logs/`，`scripts/check_log.py` 检查 UVM summary 和非零错误计数。
 原 smoke testbench 是双 active VIP 自检；新增时序测试使用独立 HDL ready 源，均不包含厂商 F-Tile 加密 RTL 模型。
 
-工程集成直接组合 filelist（`ETH_SEG_AGENT_ROOT` 指向本仓库）：先放 aip_core 的 `aip_core.f`（cfg 用
-aip_core 宏读参，需 `-timescale=1ns/1ps`），再放基础 VIP `eth_seg_agent.f`（interface、types、package、checker）；
-可选部分 `eth_seg_agent_bind.f`（bind wrapper）、`eth_seg_agent_net_packet.f`（另需 net_packet.f）和
-`eth_seg_agent_flow.f`（另需 flow_control.f）放在其后。Makefile 的 `AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL`
-缺省取对应的 `*_ROOT`。aip_core 自带的 `aip_clk.sv` 声明 `timescale 1ns/1fs`，全局精度因此为 1fs。
+工程集成每个项目一行大写 `-F`（filelist 内路径相对它自己的目录，不需要 `*_ROOT`，可在任意目录编译；filelist 不拉入依赖），
+按依赖顺序：
+
+```text
+-F <ws>/aip_core/aip_core.f            // cfg 用 aip_core 宏读参，需 -timescale=1ns/1ps
+-F <ws>/flow_control/flow_control.f
+-F <ws>/net_packet/net_packet.f
+-F <ws>/eth_seg_agent/eth_seg_agent.f  // interface、types、package、checker、eth_net_packet_pkg、eth_flow_pkg
+-F <ws>/eth_seg_agent/eth_seg_agent_bind.f   // 可选 add-on：bind wrapper，bind 到已有 DUT 时才加
+```
+
+`eth_seg_agent.f` 只编译根入口 `eth_seg_agent_pkg.sv`（按原顺序 include 上述源码）；在自己的 package/module 内写一行
+`` `include "eth_seg_agent_import.svh" `` 即可 import `eth_seg_types_pkg`、`eth_seg_pkg`、`eth_net_packet_pkg`、`eth_flow_pkg`。
+原可选 filelist `eth_seg_agent_net_packet.f`、`eth_seg_agent_flow.f` 已并入 `eth_seg_agent.f` 并删除，因此 net_packet、flow_control
+成为所有目标的前置。Makefile 的 `AIP_CORE`/`NET_PACKET`/`FLOW_CONTROL` 缺省取对应的 `*_ROOT`。
+aip_core 自带的 `aip_clk.sv` 声明 `timescale 1ns/1fs`，全局精度因此为 1fs。
 
 agent build 开头按登记名（bind 时即 `AGENT_NAME`）用 aip_core 宏读取 cfg 全部字段，未给出的保持现值，
 例如 `+eth0.include_fcs=1 +eth0.role=ETH_SEG_MAC +eth0.max_pending=8`（Tcl bridge 在 run 阶段才工作，build 读参用 plusarg）。
