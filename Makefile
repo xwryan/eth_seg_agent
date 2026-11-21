@@ -191,7 +191,8 @@ loopback-aip-run:
 	AIP_CORE="$(AIP_CORE_ROOT)" $(SIMV) +ntb_random_seed=$(SEED) -ucli -do $(abspath test/loopback/loopback.tcl) -no_save -exitstatus -l $(BUILD)/logs/loopback_aip_test.log < /dev/null
 	python3 scripts/check_log.py $(BUILD)/logs/loopback_aip_test.log run ETH_LOOPBACK_AIP_TEST_COMPLETE
 
-# SHM 联仿（可选）：SimFlow 编译 test/shm 后跑两个 eth_seg_agent 节点的背靠背用例，1 个须通过、3 个故障注入须失败。
+# SHM 联仿（可选）：SimFlow 编译 test/shm 后跑两个 eth_seg_agent 节点的背靠背用例（单链路、带内握手、多链路与混合速率），
+# 4 个须通过、8 个故障注入或链路名不一致须失败，再直接跑 simv 做 6 个构建期配置检查。
 # SHM_WORK 指向已构建 shm_switch 的 shm_work，SIMFLOW 指向包含 simflow 包的目录；AIP_CORE 需已 make -C dist libs，
 # NET_PACKET、FLOW_CONTROL 与其它目标相同。
 SHM_WORK ?= $(SHM_WORK_ROOT)

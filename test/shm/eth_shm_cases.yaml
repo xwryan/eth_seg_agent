@@ -1,6 +1,7 @@
 # 两个 eth_seg_agent 节点背靠背：dut_a 与 dut_b 互为 to，SimFlow 解析为两个 BIDIR 节点。
-# 每个节点一份 tb_shm：lb0_client 代替 DUT 发 TX，lb0_mac 置 shm=1 接入 SHM；+shm_eth.* 是测试参数。
-# dut_a 发 120 帧（不带 FCS），dut_b 发 60 帧（带 FCS，第 3 帧坏 FCS、第 7 帧 EOP error），各自逐字节核对对端帧。
+# 每个节点一份 tb_shm：<link>_client 代替 DUT 发 TX，<link>_mac 置 shm=1 接入 SHM；+shm_eth.* 是测试参数。
+# 单链路（lb0）：dut_a 发 120 帧（不带 FCS），dut_b 发 60 帧（带 FCS，第 3 帧坏 FCS、第 7 帧 EOP error），各自逐字节核对对端帧。
+# 多链路（eth0..eth3，另有 400G 的 eth4）：一个节点的多个 shm=1 agent 共用该节点唯一的 SHM 端口，按链路名对应对端的同名链路。
 def_tc:
   - name: eth_shm_node
     test: eth_seg_shm_test
@@ -25,6 +26,40 @@ def_tc:
       shm_eth.seed: 20261120
     tcl: |
       source $::env(ETH_SEG_AGENT_ROOT)/test/shm/eth_shm_handshake.tcl
+
+  # 多链路：四条 100G link 的 MAC 都置 shm=1；节点级参数用叶名一次给全部 agent（+shm_idle_sleep_us=20）。
+  # 每条链路每个方向 40 帧；节点 Tcl 见 eth_shm_mlink.tcl（+shm_eth.hs 选择是否经控制通道发 hello）。
+  - name: eth_shm_mlink_node
+    test: eth_seg_shm_mlink_test
+    seed: 1
+    params:
+      eth0_mac.shm: 1
+      eth1_mac.shm: 1
+      eth2_mac.shm: 1
+      eth3_mac.shm: 1
+      shm_idle_sleep_us: 20
+      shm_eth.seed: 20261121
+      shm_eth.tx_frames: 40
+      shm_eth.rx_frames: 40
+      shm_eth.hs: none
+    tcl: |
+      source $::env(ETH_SEG_AGENT_ROOT)/test/shm/eth_shm_mlink.tcl
+
+  # 混合速率：100G 的 eth0 与 400G 的 eth4 同时置 shm=1，链路名取 agent 叶名（eth0_mac、eth4_mac）。
+  - name: eth_shm_mixed_node
+    test: eth_seg_shm_mlink_test
+    seed: 1
+    params:
+      eth0_mac.shm: 1
+      eth4_mac.shm: 1
+      shm_idle_sleep_us: 20
+      shm_eth.seed: 20261121
+      shm_eth.port_names: eth0,eth4
+      shm_eth.tx_frames: 30
+      shm_eth.rx_frames: 30
+      shm_eth.hs: none
+    tcl: |
+      source $::env(ETH_SEG_AGENT_ROOT)/test/shm/eth_shm_mlink.tcl
 
 def_shm_cosim:
   - name: eth_shm_pair
@@ -183,3 +218,149 @@ def_shm_cosim:
         shm_eth.hs: no_signal
         shm_eth.ctrl_tx: 1
         shm_eth.ctrl_rx: 1
+
+  # 多链路（须通过）：两节点各四条 100G link 同时双向收发，链路名经 +<agent>.shm_link 设为 eth0..eth3；dut_b 把 eth0_mac/eth1_mac
+  # 的链路名对调（按链路名分发，与 agent 顺序无关）。dut_a 的 eth2 发坏 FCS 与 EOP error 帧（dut_b 的链路 eth2 核对 rx_fcs_error），
+  # dut_b 的 eth1_mac 保留 FCS；两端 shm_link_check=1 先交换链路名集合，dut_a 再经控制通道发一次 hello。
+  # endpoint 期望：dut_a tx=160+1+1 rx=160+1，dut_b tx=160+1 rx=160+1+1（数据帧 + hello + 链路名集合）。
+  - name: eth_shm_mlink
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    params:
+      shm_link_check: 1
+    map:
+      dut_a:
+        tc: eth_shm_mlink_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.hs: hello
+        shm_eth.ctrl_tx: 1
+        shm_eth.tx_errors_port: eth2
+        eth2_client.include_fcs: 1
+        eth0_mac.shm_link: eth0
+        eth1_mac.shm_link: eth1
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth3
+      dut_b:
+        tc: eth_shm_mlink_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.hs: hello
+        shm_eth.ctrl_rx: 1
+        shm_eth.rx_errors_link: eth2
+        eth1_mac.include_fcs: 1
+        eth0_mac.shm_link: eth1
+        eth1_mac.shm_link: eth0
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth3
+
+  # 混合速率（须通过）：每个节点一条 100G 与一条 400G link 共用一个 SHM 端口，链路名取 agent 叶名。
+  - name: eth_shm_mixed
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_mixed_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+      dut_b:
+        tc: eth_shm_mixed_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+
+  # 链路名不一致（预期失败）：dut_b 第四条链路叫 eth9 且不发帧，dut_a 的 eth3 帧到达 dut_b 即 fail closed（不丢、不交给别的链路）。
+  - name: eth_shm_mlink_unknown
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_mlink_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        eth0_mac.shm_link: eth0
+        eth1_mac.shm_link: eth1
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth3
+      dut_b:
+        tc: eth_shm_mlink_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        shm_eth.quiet_port: eth3
+        eth0_mac.shm_link: eth0
+        eth1_mac.shm_link: eth1
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth9
+
+  # 链路名集合核对（预期失败）：同样的不一致，两端 shm_link_check=1，开始时交换链路名集合，先收到对端集合的一端即 fail closed。
+  - name: eth_shm_mlink_set_mismatch
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    params:
+      shm_link_check: 1
+    map:
+      dut_a:
+        tc: eth_shm_mlink_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        eth0_mac.shm_link: eth0
+        eth1_mac.shm_link: eth1
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth3
+      dut_b:
+        tc: eth_shm_mlink_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+        eth0_mac.shm_link: eth0
+        eth1_mac.shm_link: eth1
+        eth2_mac.shm_link: eth2
+        eth3_mac.shm_link: eth9
+
+  # 单条链路改帧（预期失败）：链路名取 agent 叶名；dut_a 在 eth2 端口把第 5 帧改一个字节，dut_b 只有链路 eth2_mac 比对失败。
+  - name: eth_shm_mlink_corrupt
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_mlink_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.corrupt_port: eth2
+        shm_eth.corrupt_index: 5
+      dut_b:
+        tc: eth_shm_mlink_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
+
+  # 单条链路丢帧（预期失败）：dut_a 在 eth1 端口漏发第 5 帧，dut_b 只有链路 eth1_mac 比对失败。
+  - name: eth_shm_mlink_drop
+    fabric: {key: auto, slots: 256, slot_size: 2048, ready_timeout: 60s}
+    map:
+      dut_a:
+        tc: eth_shm_mlink_node
+        port: 0
+        to: dut_b
+        shm_eth.self: 0
+        shm_eth.peer: 1
+        shm_eth.drop_port: eth1
+        shm_eth.drop_index: 5
+      dut_b:
+        tc: eth_shm_mlink_node
+        port: 1
+        to: dut_a
+        shm_eth.self: 1
+        shm_eth.peer: 0
