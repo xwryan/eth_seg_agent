@@ -212,6 +212,7 @@ package eth_seg_shm_test_pkg;
     // end_test 失败只打 aip [ERROR]，这里把两个检查器的结论转成 UVM_ERROR，再核对计数与诊断。
     function void final_check();
       int unsigned expected_errors = tx_errors ? 2 : 0;
+      eth_seg_shm_hub hub = link.hub;
       check_new_frames();
       if (transport.has_failed() || !transport.is_done())
         `uvm_error("SHM_TEST_TRANSPORT", {"shm_transport not complete: ", transport.status_detail()})
@@ -225,9 +226,9 @@ package eth_seg_shm_test_pkg;
         `uvm_error("SHM_TEST_LINK", $sformatf("link sent=%0d/%0d received=%0d driven=%0d/%0d flushed=%0d dropped=%0d tx_errors=%0d/%0d",
                    link.sent_frames, expected_tx, link.received_frames, link.driven_frames, rx_frames,
                    link.flushed_frames, link.dropped_frames, link.tx_errors, expected_errors))
-      if (link.ctrl_sent != ctrl_tx || link.ctrl_received != ctrl_rx || link.ctrl_dropped != 0 || link.unclaimed() != "")
+      if (hub.ctrl_sent != ctrl_tx || hub.ctrl_received != ctrl_rx || hub.ctrl_dropped != 0 || hub.unclaimed() != "")
         `uvm_error("SHM_TEST_CTRL", $sformatf("control signals sent=%0d/%0d received=%0d/%0d dropped=%0d unclaimed='%s'",
-                   link.ctrl_sent, ctrl_tx, link.ctrl_received, ctrl_rx, link.ctrl_dropped, link.unclaimed()))
+                   hub.ctrl_sent, ctrl_tx, hub.ctrl_received, ctrl_rx, hub.ctrl_dropped, hub.unclaimed()))
       if (tx_error_catcher.msgs.size() != expected_errors)
         `uvm_error("SHM_TEST_TX_ERROR", $sformatf("%0d ETH_SHM_TX_ERROR reports, expected %0d",
                    tx_error_catcher.msgs.size(), expected_errors))
@@ -242,7 +243,7 @@ package eth_seg_shm_test_pkg;
       `uvm_info("ETH_SHM_COSIM_TEST_COMPLETE",
                 $sformatf({"node=%0d sent=%0d received=%0d mismatches=%0d tx_errors=%0d ctrl_sent=%0d ctrl_received=%0d ",
                            "endpoint tx=%0d rx=%0d full_retry=%0d paused_retry=%0d"},
-                          self, link.sent_frames, checked, mismatches, link.tx_errors, link.ctrl_sent, link.ctrl_received,
+                          self, link.sent_frames, checked, mismatches, link.tx_errors, hub.ctrl_sent, hub.ctrl_received,
                           link.endpoint.tx_frames, link.endpoint.rx_frames, link.endpoint.tx_full_retry,
                           link.endpoint.tx_paused_retry), UVM_NONE)
     endfunction
